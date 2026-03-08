@@ -1,0 +1,31 @@
+# Version control
+.git
+.gitignore
+
+# Claude Code
+.claude/
+
+# Node dependencies (reinstalled in image)
+node_modules/
+
+# Next.js build cache
+.next/
+
+# Local env overrides
+.env
+.env.local
+.env.*.local
+
+# TypeScript build info
+tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+
+# Docs
+*.md
+
+# Docker files themselves (avoid recursive ADD)
+Dockerfile
+docker-compose.yml
+.dockerignore

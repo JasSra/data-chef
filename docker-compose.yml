@@ -1,0 +1,42 @@
+# dataChef — zero-config start
+#
+#   docker compose up --build
+#
+# App opens at http://localhost:3333
+# No external services required — all data is in-memory by default.
+#
+# Optional: copy .env.example → .env and fill in Azure credentials to enable
+# the App Insights connector.  The file is intentionally absent so the app
+# starts cleanly without it.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Optional build args (passed through to Next.js build time if needed)
+      # args:
+      #   SOME_PUBLIC_VAR: value
+    image: datachef:latest
+    container_name: datachef
+    restart: unless-stopped
+    ports:
+      - "3333:3000"
+    environment:
+      NODE_ENV: production
+      # ── Optional: App Insights connector (Azure Monitor / Log Analytics) ──
+      # Uncomment and fill in to pre-seed an App Insights connector on startup.
+      # These are only used at runtime; they never appear in the built image.
+      # APPINSIGHTS_TENANT_ID: ""
+      # APPINSIGHTS_CLIENT_ID: ""
+      # APPINSIGHTS_CLIENT_SECRET: ""
+      # APPINSIGHTS_WORKSPACE_ID: ""   # for Azure Monitor (recommended)
+      # APPINSIGHTS_APP_ID: ""         # for legacy App Insights API
+    # env_file:
+    #   - .env          # uncomment after: cp .env.example .env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/datasets"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

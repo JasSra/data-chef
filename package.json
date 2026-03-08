@@ -1,0 +1,37 @@
+{
+  "name": "datachef",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3333",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1004.0",
+    "@google-cloud/bigquery": "^8.1.1",
+    "alasql": "^4.17.0",
+    "jmespath": "^0.16.0",
+    "jsonpath-plus": "^10.4.0",
+    "lucide-react": "^0.378.0",
+    "mongodb": "^7.1.0",
+    "mysql2": "^3.19.0",
+    "next": "14.2.3",
+    "pg": "^8.20.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ssh2-sftp-client": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/jmespath": "^0.15.2",
+    "@types/node": "^20.12.7",
+    "@types/pg": "^8.18.0",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.4.5"
+  }
+}
