@@ -23,6 +23,13 @@ export interface UiStep {
   config: string
 }
 
+export interface RuntimeStep {
+  id: string
+  op: string
+  label: string
+  config: Record<string, unknown>
+}
+
 export interface PipelineDef {
   id:             string
   name:           string
@@ -32,6 +39,7 @@ export interface PipelineDef {
   dataset:        string
   steps:          StepDef[]        // server-side execution steps
   uiSteps:        UiStep[]         // client-side DAG nodes
+  runtimeSteps?:  RuntimeStep[]    // runtime step definitions with real config
   quarantineStep: UiStep | null
 }
 

@@ -21,7 +21,7 @@ import { NextRequest } from 'next/server'
 import { workerStart, workerEnd } from '@/lib/pipelines'
 import {
   inferSchema,
-  samplePostgresRowsFromConfig,
+  sampleRowsFromRuntimeConfig,
 } from '@/lib/runtime-data'
 
 export const dynamic = 'force-dynamic'
@@ -229,28 +229,17 @@ export async function POST(req: NextRequest) {
           controller.enqueue(sse({ type: 'log', level: 'info', msg: 'KQL tables available: requests, exceptions, traces, dependencies, customEvents' }))
           controller.enqueue(sse({ type: 'done', ok: true, latencyMs }))
 
-        } else if (connectorType === 'postgresql') {
-          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Resolving ${String(body.host ?? 'localhost')}:${String(body.port ?? '5432')}` }))
+        } else if (['postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery'].includes(connectorType)) {
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Starting live ${connectorType} probe` }))
           await sleep(120)
-          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Authenticating as '${String(body.dbUser ?? 'user')}'` }))
-          await sleep(120)
-
           let rows: Record<string, unknown>[]
           try {
-            rows = await samplePostgresRowsFromConfig({
-              host: body.host,
-              port: body.port,
-              database: body.database,
-              dbUser: body.dbUser,
-              dbPass: body.dbPass,
-              ssl: body.ssl,
-              tableOrQuery: body.tableOrQuery,
-              useConnectionString: body.useConnectionString,
-              connectionString: body.connectionString,
-            }, undefined, 100)
+            rows = await sampleRowsFromRuntimeConfig(connectorType as 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery', body, {
+              rowLimit: 100,
+            })
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e)
-            controller.enqueue(sse({ type: 'log', level: 'error', msg: `PostgreSQL connection failed: ${msg}` }))
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
             controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
             return
           }
@@ -258,7 +247,7 @@ export async function POST(req: NextRequest) {
           const latencyMs = Math.round(performance.now() - t0)
           const schema = inferSchema(rows)
           controller.enqueue(sse({ type: 'log', level: 'info', msg: `Fetched ${rows.length} sample rows` }))
-          controller.enqueue(sse({ type: 'log', level: 'success', msg: `${schema.length} fields inferred · PostgreSQL runtime ready` }))
+          controller.enqueue(sse({ type: 'log', level: 'success', msg: `${schema.length} fields inferred · ${connectorType} runtime ready` }))
           controller.enqueue(sse({ type: 'done', ok: true, latencyMs }))
 
         } else if (connectorType === 'http' && url.startsWith('http')) {

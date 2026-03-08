@@ -13,13 +13,10 @@
 
 import { NextRequest } from 'next/server'
 import { PIPELINE_MAP, workerStart, workerEnd, recordRun } from '@/lib/pipelines'
+import { executePipelineStep, loadPipelineSourceRows } from '@/lib/pipeline-runtime'
 
 function sse(data: object) {
   return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)
-}
-
-function sleep(ms: number) {
-  return new Promise<void>(r => setTimeout(r, ms))
 }
 
 export async function POST(
@@ -45,49 +42,84 @@ export async function POST(
       let failed          = false
 
       try {
+        const runtimeSteps = pipeline.runtimeSteps
         controller.enqueue(sse({
           type: 'start',
           pipelineId: params.id,
           name:       pipeline.name,
-          totalSteps: pipeline.steps.length,
+          totalSteps: runtimeSteps?.length ?? pipeline.steps.length,
         }))
 
-        for (let i = 0; i < pipeline.steps.length && !failed; i++) {
-          const step      = pipeline.steps[i]
-          const stepStart = performance.now()
+        if (runtimeSteps?.length) {
+          let rows = await loadPipelineSourceRows(pipeline.dataset, 200)
+          for (let i = 0; i < runtimeSteps.length && !failed; i++) {
+            const step = runtimeSteps[i]
+            const stepStart = performance.now()
 
-          controller.enqueue(sse({ type: 'step_start', stepIndex: i, label: step.label, rowsIn: step.rowsIn }))
+            controller.enqueue(sse({ type: 'step_start', stepIndex: i, label: step.label, rowsIn: rows.length }))
 
-          // Stream log lines progressively during step execution
-          const logLines = step.logLines ?? []
-          const logDelay = step.durationMs / (logLines.length + 1)
-          for (const line of logLines) {
-            await sleep(logDelay)
-            controller.enqueue(sse({ type: 'log', stepIndex: i, message: line }))
+            try {
+              const result = await executePipelineStep(step, rows)
+              for (const line of result.logs) {
+                controller.enqueue(sse({ type: 'log', stepIndex: i, message: line }))
+              }
+              rows = result.rows
+              controller.enqueue(sse({
+                type: 'step_done',
+                stepIndex: i,
+                label: step.label,
+                rowsOut: rows.length,
+                durationMs: Math.round(performance.now() - stepStart),
+              }))
+              stepsCompleted = i + 1
+            } catch (e: unknown) {
+              controller.enqueue(sse({
+                type: 'step_error',
+                stepIndex: i,
+                label: step.label,
+                message: e instanceof Error ? e.message : String(e),
+              }))
+              controller.enqueue(sse({
+                type: 'done',
+                status: 'failed',
+                stepsCompleted: i,
+                durationMs: Math.round(performance.now() - totalStart),
+              }))
+              finalStatus = 'failed'
+              stepsCompleted = i
+              failed = true
+            }
           }
+        } else {
+          for (let i = 0; i < pipeline.steps.length && !failed; i++) {
+            const step      = pipeline.steps[i]
+            const stepStart = performance.now()
 
-          // Consume remaining step time
-          const elapsed = performance.now() - stepStart
-          if (elapsed < step.durationMs) await sleep(step.durationMs - elapsed)
+            controller.enqueue(sse({ type: 'step_start', stepIndex: i, label: step.label, rowsIn: step.rowsIn }))
 
-          if (step.isError) {
-            controller.enqueue(sse({
-              type: 'step_error', stepIndex: i, label: step.label,
-              message: step.errorMsg ?? 'Step failed',
-            }))
-            controller.enqueue(sse({
-              type: 'done', status: 'failed', stepsCompleted: i,
-              durationMs: Math.round(performance.now() - totalStart),
-            }))
-            finalStatus    = 'failed'
-            stepsCompleted = i
-            failed         = true
-          } else {
-            controller.enqueue(sse({
-              type: 'step_done', stepIndex: i, label: step.label,
-              rowsOut: step.rowsOut, durationMs: Math.round(performance.now() - stepStart),
-            }))
-            stepsCompleted = i + 1
+            for (const line of step.logLines ?? []) {
+              controller.enqueue(sse({ type: 'log', stepIndex: i, message: line }))
+            }
+
+            if (step.isError) {
+              controller.enqueue(sse({
+                type: 'step_error', stepIndex: i, label: step.label,
+                message: step.errorMsg ?? 'Step failed',
+              }))
+              controller.enqueue(sse({
+                type: 'done', status: 'failed', stepsCompleted: i,
+                durationMs: Math.round(performance.now() - totalStart),
+              }))
+              finalStatus    = 'failed'
+              stepsCompleted = i
+              failed         = true
+            } else {
+              controller.enqueue(sse({
+                type: 'step_done', stepIndex: i, label: step.label,
+                rowsOut: step.rowsOut, durationMs: Math.round(performance.now() - stepStart),
+              }))
+              stepsCompleted = i + 1
+            }
           }
         }
 
@@ -95,7 +127,7 @@ export async function POST(
           const durationMs = Math.round(performance.now() - totalStart)
           controller.enqueue(sse({
             type: 'done', status: 'succeeded',
-            stepsCompleted: pipeline.steps.length, durationMs,
+            stepsCompleted: runtimeSteps?.length ?? pipeline.steps.length, durationMs,
           }))
         }
       } finally {

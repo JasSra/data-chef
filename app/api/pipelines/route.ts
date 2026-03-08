@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PIPELINES, buildPipelineResponse, addPipeline, updatePipeline } from '@/lib/pipelines'
-import type { StepDef, UiStep } from '@/lib/pipelines'
+import type { StepDef, UiStep, RuntimeStep } from '@/lib/pipelines'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,6 +72,12 @@ export async function POST(req: NextRequest) {
     rowsOut:    0,
     logLines:   [`Running ${s.label}…`, `${s.label} completed`],
   }))
+  const runtimeSteps: RuntimeStep[] = steps.map(s => ({
+    id: s.id,
+    op: s.op,
+    label: s.label,
+    config: s.config,
+  }))
 
   if (id) {
     const updated = updatePipeline(id, {
@@ -80,6 +86,7 @@ export async function POST(req: NextRequest) {
       status: status || 'draft',
       uiSteps,
       steps: stepDefs,
+      runtimeSteps,
       quarantineStep: uiSteps.some(s => s.op === 'validate') && steps.some(s => s.config.quarantine)
         ? { id: `${id}-q`, op: 'quarantine', label: 'Quarantine', icon: 'quarantine', status: 'ok', config: 'invalid records → /quarantine/' }
         : null,
@@ -96,6 +103,7 @@ export async function POST(req: NextRequest) {
     avgDuration: '—',
     steps:       stepDefs,
     uiSteps,
+    runtimeSteps,
     quarantineStep: uiSteps.some(s => s.op === 'validate') && steps.some(s => s.config.quarantine)
       ? { id: 'q-new', op: 'quarantine', label: 'Quarantine', icon: 'quarantine', status: 'ok', config: 'invalid records → /quarantine/' }
       : null,

@@ -23,7 +23,7 @@ import { updateConnectorSync, getConnectorRuntimeConfig } from '@/lib/connectors
 import {
   extractArray,
   inferSchema,
-  samplePostgresRowsFromConfig,
+  sampleRowsFromRuntimeConfig,
 } from '@/lib/runtime-data'
 
 export const dynamic = 'force-dynamic'
@@ -83,11 +83,11 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const t0 = performance.now()
       try {
-        if (connectorType === 'postgresql') {
+        if (['postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery'].includes(connectorType)) {
           controller.enqueue(sse({ type: 'log', level: 'info', msg: `Starting sync for '${connectorName}'` }))
           controller.enqueue(sse({ type: 'progress', p: 10 }))
           await sleep(180)
-          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Connecting to PostgreSQL…' }))
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Connecting to ${connectorType}…` }))
 
           const config = getConnectorRuntimeConfig(connectorId)
           if (!config) {
@@ -98,10 +98,14 @@ export async function POST(req: NextRequest) {
 
           let records: Record<string, unknown>[]
           try {
-            records = await samplePostgresRowsFromConfig(config, undefined, 500)
+            records = await sampleRowsFromRuntimeConfig(
+              connectorType as 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery',
+              config,
+              { rowLimit: 500 },
+            )
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e)
-            controller.enqueue(sse({ type: 'log', level: 'error', msg: `PostgreSQL sync failed: ${msg}` }))
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
             controller.enqueue(sse({ type: 'done', ok: false, records: 0, durationMs: Math.round(performance.now() - t0) }))
             return
           }
