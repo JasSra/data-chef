@@ -75,68 +75,7 @@ function seedHistory(
   }))
 }
 
-const SEED: ConnectorRecord[] = [
-  {
-    id: 'c0', name: 'Rick & Morty API', type: 'http', status: 'connected',
-    authMethod: 'None (public)',
-    endpoint: 'https://rickandmortyapi.com/api/character/',
-    description: 'Live read-only REST API — all 826 characters, paginated, cached server-side',
-    datasets: ['rick-morty-characters'], syncInterval: 'on-demand',
-    latencyMs: 180, lastSyncAt: NOW - 5 * MIN, recordsRaw: 826,
-    syncHistory: seedHistory(12, 2 * HR,  826,     0,    180, NOW - 5 * MIN),
-    createdAt:   NOW - 30 * DAY,
-  },
-  {
-    id: 'c1', name: 'Stripe Webhooks', type: 'webhook', status: 'connected',
-    authMethod: 'HMAC-SHA256',
-    endpoint: 'https://api.datachef.io/ingest/webhook/acme-labs',
-    description: 'Inbound Stripe payment and billing events via signed webhooks',
-    datasets: ['billing-events'], syncInterval: 'real-time',
-    latencyMs: 12, lastSyncAt: NOW - 2 * MIN, recordsRaw: 4_100_000,
-    syncHistory: seedHistory(12, 30 * MIN, 3200,   0.25, 12,  NOW - 2 * MIN),
-    createdAt:   NOW - 20 * DAY,
-  },
-  {
-    id: 'c2', name: 'S3 Data Lake', type: 's3', status: 'connected',
-    authMethod: 'AWS IAM Role',
-    endpoint: 's3://acme-datalake-prod/logs/',
-    description: 'Production log archive in S3-compatible storage (Parquet + JSONL)',
-    datasets: ['server-logs'], syncInterval: 'every 15min',
-    latencyMs: 340, lastSyncAt: NOW - 1 * HR, recordsRaw: 12_100_000,
-    syncHistory: seedHistory(12, 15 * MIN, 95000,  0.3,  340, NOW - 1 * HR),
-    createdAt:   NOW - 15 * DAY,
-  },
-  {
-    id: 'c3', name: 'Commerce API', type: 'http', status: 'connected',
-    authMethod: 'OAuth 2.0',
-    endpoint: 'https://api.commerce.io/v2/products',
-    description: 'Product catalog REST API with OAuth2 and incremental cursor-based sync',
-    datasets: ['product-catalog'], syncInterval: 'every 6h',
-    latencyMs: 220, lastSyncAt: NOW - 3 * HR, recordsRaw: 89_000,
-    syncHistory: seedHistory(12, 6 * HR,   820,    0.1,  220, NOW - 3 * HR),
-    createdAt:   NOW - 10 * DAY,
-  },
-  {
-    id: 'c4', name: 'PostgreSQL (prod)', type: 'postgresql', status: 'connected',
-    authMethod: 'TLS + password',
-    endpoint: 'pg-prod.internal:5432/appdb',
-    description: 'Primary application database — user tables with CDC-based incremental sync',
-    datasets: ['user-profiles'], syncInterval: 'every 30min',
-    latencyMs: 8, lastSyncAt: NOW - 20 * MIN, recordsRaw: 150_000,
-    syncHistory: seedHistory(12, 30 * MIN, 2400,   0.2,  8,   NOW - 20 * MIN),
-    createdAt:   NOW - 8 * DAY,
-  },
-  {
-    id: 'c5', name: 'Legacy FTP', type: 'sftp', status: 'disconnected',
-    authMethod: 'Basic auth',
-    endpoint: 'ftp://legacy.supplier.net/exports/',
-    description: 'Supplier data export over FTP — pending migration to SFTP',
-    datasets: [], syncInterval: 'daily',
-    latencyMs: 0, lastSyncAt: NOW - 3 * DAY, recordsRaw: 0,
-    syncHistory: seedHistory(8, DAY, 4200, 0.4, 1800, NOW - 3 * DAY),
-    createdAt:   NOW - 25 * DAY,
-  },
-]
+const SEED: ConnectorRecord[] = []
 
 /* ── App Insights credential vault (server-side only, never serialised) ── */
 export interface AppInsightsCredentials {

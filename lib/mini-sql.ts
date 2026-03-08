@@ -44,6 +44,18 @@ export interface SqlResult {
   error?: string
 }
 
+interface AggState {
+  count: number
+  sum: number
+  min?: number
+  max?: number
+}
+
+interface GroupState {
+  firstRow: Row
+  aggregates: Record<string, AggState>
+}
+
 /* ── Public API ─────────────────────────────────────────────────────────── */
 export function executeSQL(sql: string, data: Row[]): SqlResult {
   const t0 = performance.now()
@@ -174,9 +186,11 @@ function run(
   { select, distinct, where, groupBy, having, orderBy, orderDir, limit }: ParsedSQL,
   data: Row[]
 ): { columns: string[]; rows: string[][] } {
+  const whereFn = where ? compileWhere(where) : null
+  const havingFn = having ? compileWhere(having) : null
 
   /* WHERE filter */
-  let rows: Row[] = where ? data.filter(r => evalWhere(where, r)) : data
+  let rows: Row[] = whereFn ? data.filter(whereFn) : data
 
   /* GROUP BY / aggregation */
   const hasAgg = select.some(c => c.agg)
@@ -195,8 +209,8 @@ function run(
   }
 
   /* HAVING — filter on aggregated rows (evaluated after GROUP BY) */
-  if (having) {
-    rows = rows.filter(r => evalWhere(having, r))
+  if (havingFn) {
+    rows = rows.filter(havingFn)
   }
 
   /* DISTINCT — deduplicate based on all column values */
@@ -241,74 +255,104 @@ function run(
 
 /* ── GROUP BY ────────────────────────────────────────────────────────────── */
 function applyGroupBy(data: Row[], groupByCols: string[], cols: SelectCol[]): Row[] {
-  const groups = new Map<string, Row[]>()
+  const groups = new Map<string, GroupState>()
 
-  if (groupByCols.length) {
-    for (const row of data) {
-      // Composite key: join all group-by column values with a null-byte separator
-      const key = groupByCols.map(c => String(row[c] ?? '')).join('\x00')
-      const g   = groups.get(key) ?? []
-      g.push(row)
-      groups.set(key, g)
+  for (const row of data) {
+    const key = groupByCols.length
+      ? groupByCols.map(c => String(row[c] ?? '')).join('\x00')
+      : '__all__'
+    const group = groups.get(key)
+    if (!group) {
+      groups.set(key, { firstRow: row, aggregates: {} })
     }
-  } else {
-    groups.set('__all__', data)
+    const state = groups.get(key)!
+
+    for (const col of cols) {
+      if (!col.agg) continue
+      const agg = state.aggregates[col.alias] ?? { count: 0, sum: 0 }
+
+      if (col.aggArg === '*') {
+        agg.count += 1
+        state.aggregates[col.alias] = agg
+        continue
+      }
+
+      const raw = col.aggArg ? row[col.aggArg] : 0
+      if (raw === null || raw === undefined) {
+        state.aggregates[col.alias] = agg
+        continue
+      }
+
+      const num = Number(raw)
+      agg.count += 1
+      agg.sum += num
+      agg.min = agg.min === undefined || num < agg.min ? num : agg.min
+      agg.max = agg.max === undefined || num > agg.max ? num : agg.max
+      state.aggregates[col.alias] = agg
+    }
   }
 
-  return Array.from(groups.values()).map(groupRows => {
+  return Array.from(groups.values()).map(groupState => {
     const result: Row = {}
     for (const col of cols) {
       if (col.isStar) {
-        Object.assign(result, groupRows[0])
+        Object.assign(result, groupState.firstRow)
         continue
       }
       if (!col.agg) {
         // plain column — take value from first row in the group
-        result[col.alias] = col.field !== undefined ? groupRows[0][col.field] : null
+        result[col.alias] = col.field !== undefined ? groupState.firstRow[col.field] : null
         continue
       }
-      const vals = col.aggArg === '*'
-        ? groupRows.map(() => 1)
-        : groupRows
-            .map(r => (col.aggArg ? r[col.aggArg] : 0))
-            .filter(v => v !== null && v !== undefined)
-            .map(Number)
-
-      result[col.alias] = aggregate(col.agg!, vals)
+      result[col.alias] = aggregate(col.agg!, groupState.aggregates[col.alias])
     }
     return result
   })
 }
 
-function aggregate(fn: NonNullable<SelectCol['agg']>, vals: number[]): number {
-  if (!vals.length) return 0
+function aggregate(fn: NonNullable<SelectCol['agg']>, state?: AggState): number {
+  if (!state || !state.count) return 0
   switch (fn) {
-    case 'COUNT': return vals.length
-    case 'SUM':   return vals.reduce((a, b) => a + b, 0)
-    case 'AVG':   return vals.reduce((a, b) => a + b, 0) / vals.length
-    case 'MIN':   return Math.min(...vals)
-    case 'MAX':   return Math.max(...vals)
+    case 'COUNT':
+      return state.count
+    case 'SUM':
+      return state.sum
+    case 'AVG':
+      return state.sum / state.count
+    case 'MIN':
+      return state.min ?? 0
+    case 'MAX':
+      return state.max ?? 0
   }
 }
 
-/* ── WHERE evaluator ────────────────────────────────────────────────────── */
-function evalWhere(expr: string, row: Row): boolean {
+/* ── WHERE compiler ─────────────────────────────────────────────────────── */
+function compileWhere(expr: string): (row: Row) => boolean {
   /* handle OR (lowest precedence) */
   const orParts = splitBoolOp(expr, 'OR')
-  if (orParts.length > 1) return orParts.some(p => evalWhere(p.trim(), row))
+  if (orParts.length > 1) {
+    const parts = orParts.map(p => compileWhere(p.trim()))
+    return row => parts.some(fn => fn(row))
+  }
 
   /* handle AND */
   const andParts = splitBoolOp(expr, 'AND')
-  if (andParts.length > 1) return andParts.every(p => evalWhere(p.trim(), row))
+  if (andParts.length > 1) {
+    const parts = andParts.map(p => compileWhere(p.trim()))
+    return row => parts.every(fn => fn(row))
+  }
 
   /* handle NOT */
   const notMatch = expr.match(/^NOT\s+(.+)$/i)
-  if (notMatch) return !evalWhere(notMatch[1].trim(), row)
+  if (notMatch) {
+    const inner = compileWhere(notMatch[1].trim())
+    return row => !inner(row)
+  }
 
   /* strip parens */
-  if (expr.startsWith('(') && expr.endsWith(')')) return evalWhere(expr.slice(1, -1), row)
+  if (expr.startsWith('(') && expr.endsWith(')')) return compileWhere(expr.slice(1, -1))
 
-  return evalCondition(expr, row)
+  return compileCondition(expr)
 }
 
 /** split on a boolean op word, but not if inside parens or quotes */
@@ -341,45 +385,52 @@ function splitBoolOp(expr: string, op: 'AND' | 'OR'): string[] {
   return parts.filter(Boolean)
 }
 
-function evalCondition(cond: string, row: Row): boolean {
+function compileCondition(cond: string): (row: Row) => boolean {
   // col IS [NOT] NULL
   const nullM = cond.match(/^(\w+)\s+(IS\s+NOT\s+NULL|IS\s+NULL)\s*$/i)
   if (nullM) {
-    const v = row[nullM[1]]
-    return nullM[2].toUpperCase().includes('NOT')
+    const [, field, op] = nullM
+    const isNot = op.toUpperCase().includes('NOT')
+    return row => {
+      const v = row[field]
+      return isNot
       ? v !== null && v !== undefined
       : v === null || v === undefined
+    }
   }
 
   // col LIKE '%val%'
   const likeM = cond.match(/^(\w+)\s+LIKE\s+'([^']*)'\s*$/i)
   if (likeM) {
-    const val = String(row[likeM[1]] ?? '')
     const pat = likeM[2].replace(/%/g, '.*').replace(/_/g, '.')
-    return new RegExp(`^${pat}$`, 'i').test(val)
+    const regex = new RegExp(`^${pat}$`, 'i')
+    const field = likeM[1]
+    return row => regex.test(String(row[field] ?? ''))
   }
 
   // col [NOT] IN ('a', 'b', ...)
   const inM = cond.match(/^(\w+)\s+(NOT\s+)?IN\s*\(([^)]+)\)\s*$/i)
   if (inM) {
-    const rowVal = String(row[inM[1]] ?? '').toLowerCase()
-    const items  = inM[3].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '').toLowerCase())
-    const found  = items.includes(rowVal)
-    return inM[2] ? !found : found   // NOT IN flips the result
+    const field = inM[1]
+    const items = new Set(inM[3].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '').toLowerCase()))
+    const negate = Boolean(inM[2])
+    return row => {
+      const found = items.has(String(row[field] ?? '').toLowerCase())
+      return negate ? !found : found
+    }
   }
 
   // col op value   (=, !=, <>, <, >, <=, >=)
   const compM = cond.match(/^(\w+)\s*(=|!=|<>|<=|>=|<|>)\s*(.+)$/)
-  if (!compM) return true  // unknown condition → pass-through
+  if (!compM) return () => true  // unknown condition → pass-through
 
   const [, col, op, rawVal] = compM
-  const rowVal = row[col]
   const isStr  = rawVal.startsWith("'") || rawVal.startsWith('"')
   const litVal: unknown = isStr
     ? rawVal.slice(1, -1)
     : isNaN(Number(rawVal)) ? rawVal : Number(rawVal)
 
-  return compare(rowVal, op, litVal)
+  return row => compare(row[col], op, litVal)
 }
 
 function compare(left: unknown, op: string, right: unknown): boolean {

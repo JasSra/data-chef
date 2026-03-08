@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
-type OpType = 'extract' | 'validate' | 'query' | 'map' | 'enrich' | 'dedupe' | 'condition' | 'write'
+type OpType = 'extract' | 'validate' | 'query' | 'map' | 'coerce' | 'flatten' | 'enrich' | 'dedupe' | 'condition' | 'write'
 
 interface Mapping { from: string; to: string; transform: string }
 
@@ -22,6 +22,10 @@ interface BuilderStepConfig {
   queryDataset?: string; queryType?: string; queryText?: string
   // map
   mappings?: Mapping[]
+  // coerce
+  coerceField?: string; coerceType?: string
+  // flatten
+  flattenField?: string; flattenMode?: string
   // enrich
   lookupUrl?: string; joinKey?: string; enrichFields?: string
   // dedupe
@@ -35,7 +39,12 @@ interface BuilderStepConfig {
 }
 
 interface BuilderStep {
-  id: string; op: OpType; label: string; config: BuilderStepConfig
+  id: string
+  op: OpType
+  label: string
+  config: BuilderStepConfig
+  invalidated?: boolean
+  invalidationReason?: string
 }
 
 interface SchemaField {
@@ -70,7 +79,7 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 function defaultLabel(op: OpType): string {
   const m: Record<OpType, string> = {
     extract: 'HTTP Fetch', validate: 'Schema Validate', query: 'Run Query',
-    map: 'Transform / Map', enrich: 'Enrich Lookup', dedupe: 'Deduplicate',
+    map: 'Transform / Map', coerce: 'Coerce Types', flatten: 'Flatten Fields', enrich: 'Enrich Lookup', dedupe: 'Deduplicate',
     condition: 'Branch Condition', write: 'Write / Project',
   }
   return m[op]
@@ -82,6 +91,8 @@ function defaultConfig(op: OpType): BuilderStepConfig {
     case 'validate':  return { validateMode: 'strict', quarantine: true }
     case 'query':     return { queryDataset: '', queryType: 'sql', queryText: '' }
     case 'map':       return { mappings: [{ from: '', to: '', transform: '' }] }
+    case 'coerce':    return { coerceField: '', coerceType: 'string' }
+    case 'flatten':   return { flattenField: '', flattenMode: 'object' }
     case 'enrich':    return { lookupUrl: '', joinKey: '', enrichFields: '' }
     case 'dedupe':    return { dedupeKey: '', dedupeWindow: '7d' }
     case 'condition': return { conditionField: '', conditionOp: '==', conditionValue: '', trueBranch: 'Pass', falseBranch: 'Drop' }
@@ -95,6 +106,8 @@ function configSummary(op: OpType, c: BuilderStepConfig): string {
     case 'validate':  return `${c.validateMode ?? 'strict'}${c.quarantine ? ' · quarantine' : ''}`
     case 'query':     return `${c.queryType ?? 'sql'}${c.queryDataset ? ` on ${c.queryDataset}` : ''}`
     case 'map':       return `${c.mappings?.filter(m => m.from).length ?? 0} field mappings`
+    case 'coerce':    return `${c.coerceField || '$.field'} → ${c.coerceType ?? 'string'}`
+    case 'flatten':   return `${c.flattenField || '$.field'} · ${c.flattenMode ?? 'object'}`
     case 'enrich':    return c.lookupUrl ? `lookup: ${c.lookupUrl.slice(0, 22)}…` : 'configure lookup'
     case 'dedupe':    return `key: ${c.dedupeKey || '—'} · ${c.dedupeWindow ?? '7d'}`
     case 'condition': return `${c.conditionField || '$.field'} ${c.conditionOp ?? '=='} ${c.conditionValue || '…'}`
@@ -102,12 +115,30 @@ function configSummary(op: OpType, c: BuilderStepConfig): string {
   }
 }
 
+function dependsOnSourceDataset(op: OpType): boolean {
+  return op === 'validate' || op === 'query' || op === 'map' || op === 'coerce' || op === 'flatten' || op === 'enrich' || op === 'dedupe' || op === 'condition'
+}
+
+function invalidateStepsForDatasetChange(steps: BuilderStep[], previousDataset: string, nextDataset: string): BuilderStep[] {
+  return steps.map(step => {
+    if (!dependsOnSourceDataset(step.op)) return step
+    return {
+      ...step,
+      config: defaultConfig(step.op),
+      invalidated: true,
+      invalidationReason: `Source changed from ${previousDataset} to ${nextDataset}`,
+    }
+  })
+}
+
 /* ── Op metadata ───────────────────────────────────────────────────────────── */
 const OP_META = [
   { op: 'extract'   as OpType, label: 'Extract / Fetch',    desc: 'HTTP, S3, DB, file',       color: 'border-sky-500/40',     bg: 'bg-sky-500/5',     iconColor: 'text-sky-400' },
   { op: 'validate'  as OpType, label: 'Validate',           desc: 'Schema check, coerce types', color: 'border-amber-500/40',   bg: 'bg-amber-500/5',   iconColor: 'text-amber-400' },
   { op: 'query'     as OpType, label: 'Query / Filter',     desc: 'SQL, JSONPath, JMESPath, KQL',color: 'border-cyan-500/40',   bg: 'bg-cyan-500/5',    iconColor: 'text-cyan-400' },
-  { op: 'map'       as OpType, label: 'Transform / Map',    desc: 'Rename, coerce, $.notation', color: 'border-violet-500/40',  bg: 'bg-violet-500/5',  iconColor: 'text-violet-400' },
+  { op: 'map'       as OpType, label: 'Transform / Map',    desc: 'Rename, remap, field expressions', color: 'border-violet-500/40',  bg: 'bg-violet-500/5',  iconColor: 'text-violet-400' },
+  { op: 'coerce'    as OpType, label: 'Coerce Types',       desc: 'Cast a field to a target type', color: 'border-fuchsia-500/40', bg: 'bg-fuchsia-500/5', iconColor: 'text-fuchsia-400' },
+  { op: 'flatten'   as OpType, label: 'Flatten',            desc: 'Expand object or array fields', color: 'border-teal-500/40',    bg: 'bg-teal-500/5',    iconColor: 'text-teal-400' },
   { op: 'enrich'    as OpType, label: 'Enrich',             desc: 'HTTP lookup, join field',    color: 'border-emerald-500/40', bg: 'bg-emerald-500/5', iconColor: 'text-emerald-400' },
   { op: 'dedupe'    as OpType, label: 'Deduplicate',        desc: 'Remove duplicate rows',      color: 'border-orange-500/40',  bg: 'bg-orange-500/5',  iconColor: 'text-orange-400' },
   { op: 'condition' as OpType, label: 'Branch / Condition', desc: 'If/else row routing',        color: 'border-rose-500/40',    bg: 'bg-rose-500/5',    iconColor: 'text-rose-400' },
@@ -119,6 +150,8 @@ function OpIcon({ op, className = 'w-4 h-4' }: { op: OpType; className?: string 
   if (op === 'validate')  return <Filter     className={className} />
   if (op === 'query')     return <Search     className={className} />
   if (op === 'map')       return <Layers     className={className} />
+  if (op === 'coerce')    return <Layers     className={className} />
+  if (op === 'flatten')   return <Layers     className={className} />
   if (op === 'enrich')    return <Sparkles   className={className} />
   if (op === 'dedupe')    return <RefreshCw  className={className} />
   if (op === 'condition') return <GitBranch  className={className} />
@@ -131,6 +164,8 @@ function opAccent(op: OpType): string {
   if (op === 'validate')  return 'text-amber-400 border-amber-500/50 bg-amber-500/10'
   if (op === 'query')     return 'text-cyan-400 border-cyan-500/50 bg-cyan-500/10'
   if (op === 'map')       return 'text-violet-400 border-violet-500/50 bg-violet-500/10'
+  if (op === 'coerce')    return 'text-fuchsia-400 border-fuchsia-500/50 bg-fuchsia-500/10'
+  if (op === 'flatten')   return 'text-teal-400 border-teal-500/50 bg-teal-500/10'
   if (op === 'enrich')    return 'text-emerald-400 border-emerald-500/50 bg-emerald-500/10'
   if (op === 'dedupe')    return 'text-orange-400 border-orange-500/50 bg-orange-500/10'
   if (op === 'condition') return 'text-rose-400 border-rose-500/50 bg-rose-500/10'
@@ -589,6 +624,46 @@ function EnrichConfig({ config, onChange, schemaFields }: {
   )
 }
 
+function CoerceConfig({ config, onChange, schemaFields }: {
+  config: BuilderStepConfig; onChange: (p: Partial<BuilderStepConfig>) => void; schemaFields: SchemaField[]
+}) {
+  return (
+    <>
+      <Field label="Field to cast">
+        <FieldChips fields={schemaFields} onInsert={v => onChange({ coerceField: v })} />
+        <input className={inputCls} value={config.coerceField ?? ''} onChange={e => onChange({ coerceField: e.target.value })}
+          placeholder="$.amount" />
+      </Field>
+      <Field label="Target type">
+        <ToggleGroup options={['string', 'integer', 'float', 'boolean', 'date', 'timestamp', 'json']} value={config.coerceType ?? 'string'} onChange={v => onChange({ coerceType: v })} />
+      </Field>
+      <div className="text-[10px] text-chef-muted bg-chef-bg border border-chef-border rounded-lg p-2.5 leading-relaxed">
+        Casts the selected field in-place during preview and runtime. Invalid casts are set to null.
+      </div>
+    </>
+  )
+}
+
+function FlattenConfig({ config, onChange, schemaFields }: {
+  config: BuilderStepConfig; onChange: (p: Partial<BuilderStepConfig>) => void; schemaFields: SchemaField[]
+}) {
+  return (
+    <>
+      <Field label="Field to flatten">
+        <FieldChips fields={schemaFields} onInsert={v => onChange({ flattenField: v })} />
+        <input className={inputCls} value={config.flattenField ?? ''} onChange={e => onChange({ flattenField: e.target.value })}
+          placeholder="$.customer" />
+      </Field>
+      <Field label="Flatten mode">
+        <ToggleGroup options={['object', 'array']} value={config.flattenMode ?? 'object'} onChange={v => onChange({ flattenMode: v })} />
+      </Field>
+      <div className="text-[10px] text-chef-muted bg-chef-bg border border-chef-border rounded-lg p-2.5 leading-relaxed">
+        Object mode expands nested keys into top-level columns. Array mode unwinds one array item into one output row.
+      </div>
+    </>
+  )
+}
+
 function DedupeConfig({ config, onChange, schemaFields }: {
   config: BuilderStepConfig; onChange: (p: Partial<BuilderStepConfig>) => void; schemaFields: SchemaField[]
 }) {
@@ -810,7 +885,9 @@ function CanvasNode({ step, index, total, selected, posX, posY, onSelect, onMove
           <span className="text-[11px] font-semibold text-chef-text leading-tight truncate">{step.label}</span>
         </div>
         <div className={`self-start text-[9px] font-mono px-1.5 py-0.5 rounded border ${accent}`}>{step.op}</div>
-        <div className="text-[9px] text-chef-muted leading-tight truncate font-mono">{configSummary(step.op, step.config)}</div>
+        <div className={`text-[9px] leading-tight truncate font-mono ${step.invalidated ? 'text-amber-300' : 'text-chef-muted'}`}>
+          {step.invalidated ? 'Needs review after source change' : configSummary(step.op, step.config)}
+        </div>
       </div>
     </div>
   )
@@ -834,7 +911,10 @@ function BuilderCanvas({ steps, selectedId, onSelect, onReorder, onDelete }: {
 
   const numRows = Math.ceil(steps.length / COLS)
   const canvasW = COLS * NODE_W + (COLS - 1) * H_GAP
-  const canvasH = numRows * NODE_H + (numRows - 1) * V_GAP
+  const quarantineIndex = steps.findIndex(step => step.op === 'validate' && step.config.quarantine)
+  const quarantineStep = quarantineIndex >= 0 ? steps[quarantineIndex] : null
+  const quarantinePos = quarantineStep ? nodePos(quarantineIndex) : null
+  const canvasH = numRows * NODE_H + (numRows - 1) * V_GAP + (quarantineStep ? NODE_H + 56 : 0)
   const arrows  = buildArrows(steps.length)
 
   return (
@@ -853,6 +933,19 @@ function BuilderCanvas({ steps, selectedId, onSelect, onReorder, onDelete }: {
               stroke="#6366f1" strokeWidth="1.5" strokeOpacity="0.5"
               markerEnd="url(#arr-b)" />
           ))}
+          {quarantinePos && (
+            <line
+              x1={quarantinePos.x + NODE_W / 2}
+              y1={quarantinePos.y + NODE_H + PAD_T}
+              x2={quarantinePos.x + NODE_W / 2}
+              y2={quarantinePos.y + NODE_H + 44 + PAD_T}
+              stroke="#f59e0b"
+              strokeWidth="1.5"
+              strokeOpacity="0.8"
+              strokeDasharray="5 3"
+              markerEnd="url(#arr-b)"
+            />
+          )}
         </svg>
 
         {steps.map((step, i) => {
@@ -867,6 +960,20 @@ function BuilderCanvas({ steps, selectedId, onSelect, onReorder, onDelete }: {
               onDelete={() => onDelete(step.id)} />
           )
         })}
+        {quarantinePos && (
+          <div
+            className="absolute border rounded-xl px-3 py-2.5 border-amber-500/40 bg-amber-500/5 text-amber-300"
+            style={{ left: quarantinePos.x, top: quarantinePos.y + NODE_H + 44 + PAD_T, width: NODE_W, height: NODE_H }}
+          >
+            <div className="flex items-center gap-2 mb-1.5">
+              <AlertTriangle size={14} className="shrink-0" />
+              <span className="text-[11px] font-semibold truncate">Quarantine</span>
+            </div>
+            <div className="text-[9px] text-chef-muted leading-tight truncate">
+              invalid rows → /quarantine/
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -885,6 +992,11 @@ function ConfigPanel({ step, schemaFields, datasets, onLabelChange, onConfigChan
         <div className="flex items-center gap-2 mb-2">
           <span className={`p-1.5 rounded-lg border ${accent}`}><OpIcon op={step.op} className="w-3.5 h-3.5" /></span>
           <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${accent}`}>{step.op}</span>
+          {step.invalidated && (
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300">
+              invalidated
+            </span>
+          )}
         </div>
         <input
           className="w-full bg-transparent text-sm font-semibold text-chef-text placeholder:text-chef-muted focus:outline-none border-b border-transparent focus:border-chef-border pb-0.5 transition-colors"
@@ -892,10 +1004,17 @@ function ConfigPanel({ step, schemaFields, datasets, onLabelChange, onConfigChan
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
+        {step.invalidated && (
+          <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] text-amber-200 leading-relaxed">
+            {step.invalidationReason ?? 'This step depends on the source dataset and needs to be reconfigured.'}
+          </div>
+        )}
         {step.op === 'extract'   && <ExtractConfig   config={step.config} onChange={onConfigChange} />}
         {step.op === 'validate'  && <ValidateConfig  config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'query'     && <QueryConfig     config={step.config} onChange={onConfigChange} datasets={datasets} schemaFields={schemaFields} />}
         {step.op === 'map'       && <MapConfig       config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
+        {step.op === 'coerce'    && <CoerceConfig    config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
+        {step.op === 'flatten'   && <FlattenConfig   config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'enrich'    && <EnrichConfig    config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'dedupe'    && <DedupeConfig    config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'condition' && <ConditionConfig config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
@@ -1057,7 +1176,7 @@ function BuilderInner() {
   const editId       = searchParams.get('id')
 
   const [builder, setBuilder] = useState<BuilderState>({
-    pipelineId: null, name: '', description: '', dataset: 'billing-events',
+    pipelineId: null, name: '', description: '', dataset: '',
     status: 'draft', steps: [], selectedStepId: null,
     previewOpen: true, saving: false, dirty: false,
   })
@@ -1067,6 +1186,7 @@ function BuilderInner() {
   const [saveError, setSaveError]       = useState<string | null>(null)
   const [sampleSize, setSampleSize]     = useState<SampleSize>(25)
   const [cacheInfo, setCacheInfo]       = useState<{ size: number; fetchedAt: number } | null>(null)
+  const invalidatedCount                = builder.steps.filter(step => step.invalidated).length
   const sourceCacheRef                  = useRef<{ rows: SourceRow[]; dataset: string; size: SampleSize } | null>(null)
   const previewTimer                    = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -1133,6 +1253,9 @@ function BuilderInner() {
       .then(r => r.json())
       .then((data: DatasetMeta[]) => {
         setDatasets(data)
+        if (!builderRef.current.dataset && data[0]) {
+          setBuilder(prev => ({ ...prev, dataset: data[0].name || data[0].id }))
+        }
         // set initial schema from selected dataset
         const match = data.find(d => d.name === builder.dataset || d.id === builder.dataset)
         if (match?.schema) setSchemaFields(match.schema)
@@ -1157,7 +1280,7 @@ function BuilderInner() {
           ...prev,
           pipelineId: data.id, name: data.name, description: data.description,
           dataset: data.dataset, status: data.status,
-          steps: data.uiSteps.map(s => ({ id: s.id, op: s.op as OpType, label: s.label, config: defaultConfig(s.op as OpType) })),
+          steps: data.uiSteps.map(s => ({ id: s.id, op: s.op as OpType, label: s.label, config: defaultConfig(s.op as OpType), invalidated: false })),
         }))
       })
       .catch(() => {})
@@ -1193,6 +1316,10 @@ function BuilderInner() {
   const doPreview = useCallback(async () => {
     if (!builderRef.current.previewOpen) return
     const b   = builderRef.current
+    if (!b.dataset) {
+      setPreview(p => ({ ...p, loading: false, error: 'Select a dataset to preview the pipeline' }))
+      return
+    }
     const idx = b.steps.findIndex(s => s.id === b.selectedStepId)
     // -1 = no step selected → show raw source data (stepIndex -1 skips all transforms)
     const effectiveIdx = idx  // may be -1, which is fine
@@ -1214,7 +1341,18 @@ function BuilderInner() {
           cachedRows: useCache ? cache!.rows : undefined,
         }),
       })
-      const data: { columns: string[]; rows: string[][]; rowCount: number; removed: number; sourceRows?: SourceRow[] } = await res.json()
+      const data: {
+        columns: string[]
+        rows: string[][]
+        rowCount: number
+        removed: number
+        sourceRows?: SourceRow[]
+        error?: string
+      } = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error ?? `Preview failed (${res.status})`)
+      }
 
       // Cache source rows returned by server (only on first/refresh fetch)
       if (data.sourceRows && data.sourceRows.length > 0) {
@@ -1269,7 +1407,13 @@ function BuilderInner() {
 
   function updateStepConfig(id: string, patch: Partial<BuilderStepConfig>) {
     pushHistory(false)
-    setBuilder(prev => ({ ...prev, steps: prev.steps.map(s => s.id === id ? { ...s, config: { ...s.config, ...patch } } : s), dirty: true }))
+    setBuilder(prev => ({
+      ...prev,
+      steps: prev.steps.map(s => s.id === id
+        ? { ...s, config: { ...s.config, ...patch }, invalidated: false, invalidationReason: undefined }
+        : s),
+      dirty: true,
+    }))
   }
 
   function updateName(name: string) {
@@ -1284,7 +1428,15 @@ function BuilderInner() {
 
   function updateDataset(dataset: string) {
     pushHistory()
-    setBuilder(prev => ({ ...prev, dataset, dirty: true }))
+    setBuilder(prev => {
+      if (prev.dataset === dataset) return prev
+      return {
+        ...prev,
+        dataset,
+        steps: invalidateStepsForDatasetChange(prev.steps, prev.dataset, dataset),
+        dirty: true,
+      }
+    })
   }
 
   function updateStatus() {
@@ -1370,6 +1522,11 @@ function BuilderInner() {
 
         {saveError && <span className="text-[10px] text-rose-400 flex items-center gap-1"><AlertTriangle size={10} /> {saveError}</span>}
         {builder.dirty && !saveError && <span className="text-[10px] text-chef-muted">Unsaved changes</span>}
+        {invalidatedCount > 0 && (
+          <span className="text-[10px] text-amber-300 flex items-center gap-1">
+            <AlertTriangle size={10} /> {invalidatedCount} step{invalidatedCount !== 1 ? 's' : ''} need review
+          </span>
+        )}
 
         <button onClick={handleSave} disabled={builder.saving || builder.steps.length === 0}
           className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${

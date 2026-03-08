@@ -1,3 +1,4 @@
+import 'server-only'
 import { getCharacters, flattenCharacter } from '@/lib/rm-api'
 import { getSyntheticEvents } from '@/lib/synthetic-data'
 import { getDatasets, type DatasetRecord, type SchemaField } from '@/lib/datasets'

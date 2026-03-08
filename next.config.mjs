@@ -2,6 +2,17 @@
 const nextConfig = {
   // Produce a self-contained build for Docker (copies only required files)
   output: 'standalone',
+  experimental: {
+    serverComponentsExternalPackages: [
+      '@aws-sdk/client-s3',
+      '@google-cloud/bigquery',
+      'mongodb',
+      'mysql2',
+      'pg',
+      'ssh2',
+      'ssh2-sftp-client',
+    ],
+  },
 
   webpack: (config, { isServer }) => {
     if (!isServer) {

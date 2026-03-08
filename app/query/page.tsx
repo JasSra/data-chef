@@ -166,38 +166,14 @@ function saveHistory(h: HistoryEntry[]) {
 }
 
 /* ── Fallback datasets (shown immediately before API loads) ──────────────────── */
-const FALLBACK_DATASETS: DatasetMeta[] = [
-  {
-    id: 'rick-morty-characters', name: 'rick-morty-characters', badge: '826',
-    desc: 'Rick & Morty characters (live API)',
-    fields: ['id','name','status','species','type','gender','origin','location','episode','created'],
-    schema: [
-      { field:'id',       type:'integer'   }, { field:'name',     type:'string'    },
-      { field:'status',   type:'string'    }, { field:'species',  type:'string'    },
-      { field:'type',     type:'string'    }, { field:'gender',   type:'string'    },
-      { field:'origin',   type:'object'    }, { field:'location', type:'object'    },
-      { field:'episode',  type:'array'     }, { field:'created',  type:'timestamp' },
-    ],
-  },
-  {
-    id: 'events', name: 'synthetic-events', badge: '500K',
-    desc: 'Synthetic billing events (server-cached)',
-    fields: ['id','user_id','event_type','amount','country','device','ts'],
-    schema: [
-      { field:'id',         type:'integer' }, { field:'user_id',    type:'integer' },
-      { field:'event_type', type:'string'  }, { field:'amount',     type:'float'   },
-      { field:'country',    type:'string'  }, { field:'device',     type:'string'  },
-      { field:'ts',         type:'date'    },
-    ],
-  },
-]
+const FALLBACK_DATASETS: DatasetMeta[] = []
 
 /* ── Page ─────────────────────────────────────────────────────────────────────── */
 export default function QueryPage() {
   const [allDatasets,   setAllDatasets]   = useState<DatasetMeta[]>(FALLBACK_DATASETS)
-  const [dataset,       setDataset]       = useState('rick-morty-characters')
+  const [dataset,       setDataset]       = useState('')
   const [lang,          setLang]          = useState<Lang>('sql')
-  const [query,         setQuery]         = useState(() => savedQueriesMap['rick-morty-characters'][0].query)
+  const [query,         setQuery]         = useState('SELECT *\nFROM dataset\nLIMIT 100')
   const [results,       setResults]       = useState<QResult | null>(null)
   const [running,       setRunning]       = useState(false)
   const [queryError,    setQueryError]    = useState<string | null>(null)
@@ -281,6 +257,10 @@ export default function QueryPage() {
           schema: d.schema?.map(f => ({ field: f.field, type: f.type })) ?? [],
         }))
         setAllDatasets(metas)
+        if (!dataset && metas[0]) {
+          setDataset(metas[0].id)
+          setQuery(defaultQueryFor(metas[0].id, 'sql'))
+        }
 
         const jumpTo = localStorage.getItem('datachef:jumpToDataset')
         if (jumpTo) {

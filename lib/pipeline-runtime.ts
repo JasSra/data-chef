@@ -17,6 +17,87 @@ export interface StepExecutionResult {
   logs: string[]
 }
 
+function pathKey(path: string): string {
+  return path.replace(/^\$\./, '')
+}
+
+function coerceValue(value: unknown, targetType: string): unknown {
+  if (value === null || value === undefined) return value
+  switch (targetType) {
+    case 'string':
+      return String(value)
+    case 'integer': {
+      const n = Number(value)
+      return Number.isFinite(n) ? Math.trunc(n) : null
+    }
+    case 'float': {
+      const n = Number(value)
+      return Number.isFinite(n) ? n : null
+    }
+    case 'boolean':
+      if (typeof value === 'boolean') return value
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase()
+        if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+        if (['false', '0', 'no', 'n'].includes(normalized)) return false
+      }
+      return Boolean(value)
+    case 'date': {
+      const d = new Date(String(value))
+      return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
+    }
+    case 'timestamp': {
+      const d = new Date(String(value))
+      return Number.isNaN(d.getTime()) ? null : d.toISOString()
+    }
+    case 'json':
+      if (typeof value === 'string') {
+        try { return JSON.parse(value) } catch { return null }
+      }
+      return value
+    default:
+      return value
+  }
+}
+
+function flattenObject(prefix: string, value: RuntimeRow, out: RuntimeRow) {
+  for (const [key, nested] of Object.entries(value)) {
+    out[`${prefix}_${key}`] = nested
+  }
+}
+
+function valueAtPath(obj: unknown, path: string): unknown {
+  const key = pathKey(path)
+  if (!key) return obj
+  return key.split('.').reduce<unknown>((acc, part) => {
+    if (acc && typeof acc === 'object' && part in (acc as Record<string, unknown>)) {
+      return (acc as Record<string, unknown>)[part]
+    }
+    return undefined
+  }, obj)
+}
+
+function applyUrlTemplate(url: string, value: string): string {
+  if (url.includes('{{value}}')) return url.replaceAll('{{value}}', encodeURIComponent(value))
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}value=${encodeURIComponent(value)}`
+}
+
+function projectEnrichFields(payload: unknown, fieldsText: string): RuntimeRow {
+  const fields = fieldsText.split(',').map(f => f.trim()).filter(Boolean)
+  if (fields.length === 0) {
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return Object.fromEntries(Object.entries(payload as RuntimeRow).map(([k, v]) => [`enrich_${k}`, v]))
+    }
+    return { enrich_value: payload }
+  }
+  const out: RuntimeRow = {}
+  for (const field of fields) {
+    out[`enrich_${field.replace(/\./g, '_')}`] = valueAtPath(payload, field)
+  }
+  return out
+}
+
 export function previewCell(v: unknown): string {
   if (v === null || v === undefined) return '∅'
   if (Array.isArray(v)) return `[${v.length}]`
@@ -150,8 +231,89 @@ export async function executePipelineStep(step: RuntimeStepInput, rows: RuntimeR
       return { rows: next, removed: 0, logs: [`Applied ${mappings.length} mappings`] }
     }
 
-    case 'enrich':
-      return { rows, removed: 0, logs: ['Enrichment runtime not implemented; passing rows through'] }
+    case 'coerce': {
+      const field = pathKey(String(step.config.coerceField ?? ''))
+      const targetType = String(step.config.coerceType ?? 'string').toLowerCase()
+      if (!field) return { rows, removed: 0, logs: ['No field configured for coercion'] }
+      const next = rows.map(row => ({
+        ...row,
+        [field]: coerceValue(row[field], targetType),
+      }))
+      return { rows: next, removed: 0, logs: [`Coerced ${field} to ${targetType}`] }
+    }
+
+    case 'flatten': {
+      const field = pathKey(String(step.config.flattenField ?? ''))
+      const mode = String(step.config.flattenMode ?? 'object').toLowerCase()
+      if (!field) return { rows, removed: 0, logs: ['No field configured for flatten'] }
+      if (mode === 'array') {
+        const next: RuntimeRow[] = []
+        for (const row of rows) {
+          const arr = row[field]
+          if (!Array.isArray(arr) || arr.length === 0) {
+            next.push(row)
+            continue
+          }
+          for (const item of arr) {
+            next.push({ ...row, [field]: item })
+          }
+        }
+        return {
+          rows: next,
+          removed: Math.max(0, rows.length - next.length),
+          logs: [`Flattened array field ${field}`, `${next.length} output rows generated`],
+        }
+      }
+
+      const next = rows.map(row => {
+        const nested = row[field]
+        if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return row
+        const out: RuntimeRow = { ...row }
+        flattenObject(field, nested as RuntimeRow, out)
+        delete out[field]
+        return out
+      })
+      return { rows: next, removed: 0, logs: [`Flattened object field ${field}`] }
+    }
+
+    case 'enrich': {
+      const lookupUrl = String(step.config.lookupUrl ?? '').trim()
+      const joinKey = pathKey(String(step.config.joinKey ?? ''))
+      if (!lookupUrl) return { rows, removed: 0, logs: ['No lookup URL configured'] }
+      if (!joinKey) return { rows, removed: 0, logs: ['No join key configured'] }
+
+      const cache = new Map<string, RuntimeRow>()
+      let misses = 0
+      const next = await Promise.all(rows.map(async row => {
+        const raw = row[joinKey]
+        if (raw === undefined || raw === null || raw === '') return row
+        const key = String(raw)
+        let enrichRow = cache.get(key)
+        if (!enrichRow) {
+          const res = await fetch(applyUrlTemplate(lookupUrl, key), {
+            headers: { Accept: 'application/json, text/plain, */*', 'User-Agent': 'dataChef-pipeline/0.1' },
+            signal: AbortSignal.timeout(10_000),
+          })
+          if (!res.ok) {
+            misses += 1
+            cache.set(key, {})
+            return row
+          }
+          const payload = await res.json()
+          enrichRow = projectEnrichFields(payload, String(step.config.enrichFields ?? ''))
+          cache.set(key, enrichRow)
+        }
+        return { ...row, ...enrichRow }
+      }))
+      return {
+        rows: next,
+        removed: 0,
+        logs: [
+          `Enriched ${rows.length} rows via ${cache.size} unique lookups`,
+          misses > 0 ? `${misses} lookup requests failed or returned non-OK` : 'All lookups completed',
+        ],
+      }
+    }
 
     case 'dedupe': {
       const key = String(step.config.dedupeKey ?? '').replace(/^\$\./, '')

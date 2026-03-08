@@ -394,10 +394,18 @@ export default function PipelinesPage() {
             </div>
           ))}
           {!loading && pipelines.map(p => (
-            <button
+            <div
               key={p.id}
+              role="button"
+              tabIndex={0}
               onClick={() => selectPipeline(p.id)}
-              className={`w-full text-left rounded-xl border mb-2 p-4 transition-all ${
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  selectPipeline(p.id)
+                }
+              }}
+              className={`w-full text-left rounded-xl border mb-2 p-4 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/40 ${
                 selectedId === p.id
                   ? 'border-indigo-500/40 bg-indigo-500/5'
                   : 'border-chef-border bg-chef-card hover:border-indigo-500/20 hover:bg-chef-card-hover'
@@ -422,7 +430,7 @@ export default function PipelinesPage() {
                 <StatusBadge status={p.lastRunStatus} />
                 <span className="ml-auto">{p.steps.length} steps</span>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       </div>

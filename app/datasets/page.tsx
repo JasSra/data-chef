@@ -98,15 +98,7 @@ function FlatSampleTable({ schema, rows }: { schema: SchemaField[]; rows: Record
 }
 
 /* ── Seeded run history (realistic, for existing datasets) ───────────────── */
-const SEED_RUNS: Record<string, { id: string; status: 'succeeded' | 'failed'; started: string; duration: string; records: string; bytes: string }[]> = {
-  '1': [
-    { id: 'run_a1b2', status: 'succeeded', started: '2026-03-06 08:00', duration: '1m 23s', records: '48K', bytes: '91 MB' },
-    { id: 'run_b2c3', status: 'succeeded', started: '2026-03-06 06:00', duration: '58s',    records: '31K', bytes: '58 MB' },
-    { id: 'run_c3d4', status: 'failed',    started: '2026-03-06 04:00', duration: '12s',    records: '—',   bytes: '—' },
-    { id: 'run_d4e5', status: 'succeeded', started: '2026-03-06 02:00', duration: '2m 01s', records: '65K', bytes: '124 MB' },
-    { id: 'run_e5f6', status: 'succeeded', started: '2026-03-06 00:00', duration: '47s',    records: '22K', bytes: '42 MB' },
-  ],
-}
+const SEED_RUNS: Record<string, { id: string; status: 'succeeded' | 'failed'; started: string; duration: string; records: string; bytes: string }[]> = {}
 
 /* ── event_type colour ───────────────────────────────────────────────────── */
 function eventTypeBadge(t: string) {

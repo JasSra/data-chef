@@ -142,7 +142,7 @@ export default function SettingsPage() {
   /* Query engine state */
   const [maxRows,   setMaxRows]   = useState('5000')
   const [timeout,   setTimeout_]  = useState('30')
-  const [defDs,     setDefDs]     = useState('events')
+  const [defDs,     setDefDs]     = useState('')
   const [autoExec,  setAutoExec]  = useState(false)
 
   /* Notification state */
@@ -264,8 +264,7 @@ export default function SettingsPage() {
                     value={defDs}
                     onChange={setDefDs}
                     options={[
-                      { value: 'events',               label: 'synthetic-events (500K rows)' },
-                      { value: 'rick-morty-characters', label: 'rick-morty-characters (826 rows)' },
+                      { value: '', label: 'No built-in default dataset' },
                     ]}
                   />
                 </Field>
@@ -277,7 +276,7 @@ export default function SettingsPage() {
               <div className="mt-4 p-3 bg-indigo-500/5 border border-indigo-500/15 rounded-xl flex items-start gap-2.5 text-[11px]">
                 <Zap size={13} className="text-indigo-400 shrink-0 mt-0.5" />
                 <div className="text-chef-muted">
-                  Server-side execution is enabled. The mini-SQL engine runs in Node.js with the full 500K event dataset held in module-level memory, giving sub-second cached response times.
+                  Server-side execution is enabled. Query performance depends on the live dataset or connector you select; there are no built-in sample datasets preloaded anymore.
                 </div>
               </div>
             </div>

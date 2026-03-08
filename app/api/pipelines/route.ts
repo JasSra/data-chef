@@ -9,7 +9,7 @@ export function GET() {
 }
 
 const OP_DURATIONS: Record<string, number> = {
-  extract: 400, validate: 250, query: 320, map: 180, enrich: 600, dedupe: 500, condition: 120, write: 380,
+  extract: 400, validate: 250, query: 320, map: 180, coerce: 220, flatten: 260, enrich: 600, dedupe: 500, condition: 120, write: 380,
 }
 
 function opIcon(op: string): string {
@@ -17,6 +17,8 @@ function opIcon(op: string): string {
   if (op === 'validate')  return 'validate'
   if (op === 'query')     return 'query'
   if (op === 'map')       return 'coerce'
+  if (op === 'coerce')    return 'coerce'
+  if (op === 'flatten')   return 'flatten'
   if (op === 'enrich')    return 'coerce'
   if (op === 'dedupe')    return 'dedupe'
   if (op === 'condition') return 'branch'
@@ -30,6 +32,8 @@ function configSummary(op: string, config: Record<string, unknown>): string {
     case 'validate':  return `mode: ${config.validateMode ?? 'strict'}${config.quarantine ? ' · quarantine on' : ''}`
     case 'query':     return `${config.queryType ?? 'sql'}${config.queryDataset ? ` on ${config.queryDataset}` : ''}`
     case 'map':       return `${(config.mappings as unknown[])?.filter((m: unknown) => (m as {from:string}).from).length ?? 0} field mappings`
+    case 'coerce':    return `${config.coerceField ?? '$.field'} → ${config.coerceType ?? 'string'}`
+    case 'flatten':   return `${config.flattenField ?? '$.field'} · ${config.flattenMode ?? 'object'}`
     case 'enrich':    return config.lookupUrl ? `lookup: ${config.lookupUrl}` : 'HTTP lookup'
     case 'dedupe':    return `key: ${config.dedupeKey ?? '—'} · window: ${config.dedupeWindow ?? '7d'}`
     case 'condition': return `${config.conditionField ?? '$.field'} ${config.conditionOp ?? '=='} ${config.conditionValue ?? '…'}`
