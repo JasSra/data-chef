@@ -35,7 +35,7 @@ interface BuilderStepConfig {
   trueBranch?: string; falseBranch?: string
   // write
   destType?: string; destFormat?: string; destPath?: string
-  createDataset?: boolean; newDatasetName?: string
+  createDataset?: boolean; newDatasetName?: string; targetDatasetId?: string
 }
 
 interface BuilderStep {
@@ -55,11 +55,19 @@ interface DatasetMeta {
   id: string; name: string; schema?: SchemaField[]
 }
 
+interface ConnectorMeta {
+  id: string
+  name: string
+  type: string
+}
+
 interface BuilderState {
   pipelineId:     string | null
   name:           string
   description:    string
+  sourceType:     'dataset' | 'connector'
   dataset:        string
+  resource?:      string
   status:         'active' | 'draft'
   steps:          BuilderStep[]
   selectedStepId: string | null
@@ -96,7 +104,7 @@ function defaultConfig(op: OpType): BuilderStepConfig {
     case 'enrich':    return { lookupUrl: '', joinKey: '', enrichFields: '' }
     case 'dedupe':    return { dedupeKey: '', dedupeWindow: '7d' }
     case 'condition': return { conditionField: '', conditionOp: '==', conditionValue: '', trueBranch: 'Pass', falseBranch: 'Drop' }
-    case 'write':     return { destType: 'S3', destFormat: 'parquet', destPath: '', createDataset: false, newDatasetName: '' }
+    case 'write':     return { destType: 'S3', destFormat: 'parquet', destPath: '', createDataset: false, newDatasetName: '', targetDatasetId: '' }
   }
 }
 
@@ -111,7 +119,10 @@ function configSummary(op: OpType, c: BuilderStepConfig): string {
     case 'enrich':    return c.lookupUrl ? `lookup: ${c.lookupUrl.slice(0, 22)}…` : 'configure lookup'
     case 'dedupe':    return `key: ${c.dedupeKey || '—'} · ${c.dedupeWindow ?? '7d'}`
     case 'condition': return `${c.conditionField || '$.field'} ${c.conditionOp ?? '=='} ${c.conditionValue || '…'}`
-    case 'write':     return c.createDataset ? `→ dataset: ${c.newDatasetName || 'new'}` : `${c.destType ?? 'S3'} · ${c.destFormat ?? 'parquet'}`
+    case 'write':
+      if (c.createDataset) return `→ dataset: ${c.newDatasetName || 'new'}`
+      if (c.targetDatasetId) return '→ refresh dataset'
+      return `${c.destType ?? 'S3'} · ${c.destFormat ?? 'parquet'}`
   }
 }
 
@@ -729,30 +740,38 @@ function ConditionConfig({ config, onChange, schemaFields }: {
   )
 }
 
-function WriteConfig({ config, onChange }: {
-  config: BuilderStepConfig; onChange: (p: Partial<BuilderStepConfig>) => void
+function WriteConfig({ config, onChange, datasets }: {
+  config: BuilderStepConfig
+  onChange: (p: Partial<BuilderStepConfig>) => void
+  datasets: DatasetMeta[]
 }) {
-  const isProject = !!config.createDataset
+  const mode = config.createDataset ? 'new-dataset' : config.targetDatasetId ? 'existing-dataset' : 'sink'
   return (
     <>
       <Field label="Output mode">
-        <div className="grid grid-cols-2 gap-1.5">
-          <button onClick={() => onChange({ createDataset: false })}
+        <div className="grid grid-cols-3 gap-1.5">
+          <button onClick={() => onChange({ createDataset: false, targetDatasetId: '' })}
             className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
-              !isProject ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-300' : 'border-chef-border bg-chef-bg text-chef-muted hover:text-chef-text'
+              mode === 'sink' ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-300' : 'border-chef-border bg-chef-bg text-chef-muted hover:text-chef-text'
             }`}>
             Export to sink
           </button>
-          <button onClick={() => onChange({ createDataset: true })}
+          <button onClick={() => onChange({ createDataset: true, targetDatasetId: '' })}
             className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
-              isProject ? 'border-violet-500/60 bg-violet-500/15 text-violet-300' : 'border-chef-border bg-chef-bg text-chef-muted hover:text-chef-text'
+              mode === 'new-dataset' ? 'border-violet-500/60 bg-violet-500/15 text-violet-300' : 'border-chef-border bg-chef-bg text-chef-muted hover:text-chef-text'
             }`}>
-            Project to dataset
+            New dataset
+          </button>
+          <button onClick={() => onChange({ createDataset: false, targetDatasetId: datasets[0]?.id ?? '' })}
+            className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+              mode === 'existing-dataset' ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-300' : 'border-chef-border bg-chef-bg text-chef-muted hover:text-chef-text'
+            }`}>
+            Refresh dataset
           </button>
         </div>
       </Field>
 
-      {isProject ? (
+      {mode === 'new-dataset' ? (
         <>
           <Field label="New Dataset Name">
             <input className={inputCls} value={config.newDatasetName ?? ''} onChange={e => onChange({ newDatasetName: e.target.value })}
@@ -763,6 +782,19 @@ function WriteConfig({ config, onChange }: {
           </Field>
           <div className="text-[10px] text-chef-muted bg-violet-500/5 border border-violet-500/20 rounded-lg p-2.5 leading-relaxed">
             Output is registered as a new live dataset — queryable in Query, usable in other pipelines, visible on the Datasets page.
+          </div>
+        </>
+      ) : mode === 'existing-dataset' ? (
+        <>
+          <Field label="Dataset to Refresh">
+            <select className={selectCls} value={config.targetDatasetId ?? ''} onChange={e => onChange({ targetDatasetId: e.target.value })}>
+              {datasets.map(dataset => (
+                <option key={dataset.id} value={dataset.id}>{dataset.name}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="text-[10px] text-chef-muted bg-cyan-500/5 border border-cyan-500/20 rounded-lg p-2.5 leading-relaxed">
+            Each successful run replaces the selected dataset sample/schema snapshot and preserves its identity for downstream queries and pipelines.
           </div>
         </>
       ) : (
@@ -1018,7 +1050,7 @@ function ConfigPanel({ step, schemaFields, datasets, onLabelChange, onConfigChan
         {step.op === 'enrich'    && <EnrichConfig    config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'dedupe'    && <DedupeConfig    config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'condition' && <ConditionConfig config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
-        {step.op === 'write'     && <WriteConfig     config={step.config} onChange={onConfigChange} />}
+        {step.op === 'write'     && <WriteConfig     config={step.config} onChange={onConfigChange} datasets={datasets} />}
       </div>
     </div>
   )
@@ -1176,11 +1208,12 @@ function BuilderInner() {
   const editId       = searchParams.get('id')
 
   const [builder, setBuilder] = useState<BuilderState>({
-    pipelineId: null, name: '', description: '', dataset: '',
+    pipelineId: null, name: '', description: '', sourceType: 'dataset', dataset: '', resource: '',
     status: 'draft', steps: [], selectedStepId: null,
     previewOpen: true, saving: false, dirty: false,
   })
   const [datasets, setDatasets]         = useState<DatasetMeta[]>([])
+  const [connectors, setConnectors]     = useState<ConnectorMeta[]>([])
   const [schemaFields, setSchemaFields]   = useState<SchemaField[]>([])
   const [preview, setPreview]           = useState<PreviewState>({ columns: [], rows: [], rowCount: 0, removed: 0, loading: false, error: null })
   const [saveError, setSaveError]       = useState<string | null>(null)
@@ -1192,7 +1225,7 @@ function BuilderInner() {
 
   // ── Undo / redo history ────────────────────────────────────────────────────
   const MAX_HISTORY = 50
-  type Snapshot = Pick<BuilderState, 'name' | 'description' | 'dataset' | 'status' | 'steps'>
+  type Snapshot = Pick<BuilderState, 'name' | 'description' | 'sourceType' | 'dataset' | 'resource' | 'status' | 'steps'>
   const historyRef    = useRef<Snapshot[]>([])
   const futureRef     = useRef<Snapshot[]>([])
   const builderRef    = useRef<BuilderState>(builder)
@@ -1204,8 +1237,8 @@ function BuilderInner() {
   builderRef.current = builder
 
   function snapshot(): Snapshot {
-    const { name, description, dataset, status, steps } = builderRef.current
-    return { name, description, dataset, status, steps }
+    const { name, description, sourceType, dataset, resource, status, steps } = builderRef.current
+    return { name, description, sourceType, dataset, resource, status, steps }
   }
 
   /** Push current state onto the undo stack.
@@ -1254,11 +1287,19 @@ function BuilderInner() {
       .then((data: DatasetMeta[]) => {
         setDatasets(data)
         if (!builderRef.current.dataset && data[0]) {
-          setBuilder(prev => ({ ...prev, dataset: data[0].name || data[0].id }))
+          setBuilder(prev => ({ ...prev, dataset: data[0].id }))
         }
         // set initial schema from selected dataset
         const match = data.find(d => d.name === builder.dataset || d.id === builder.dataset)
         if (match?.schema) setSchemaFields(match.schema)
+      })
+      .catch(() => {})
+    fetch('/api/connectors')
+      .then(r => r.json())
+      .then((data: ConnectorMeta[]) => {
+        setConnectors(data.filter(connector =>
+          ['http', 'postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery', 'redis', 'appinsights', 'azuremonitor', 'elasticsearch', 'datadog', 'azureb2c', 'azureentraid'].includes(connector.type),
+        ))
       })
       .catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1266,21 +1307,52 @@ function BuilderInner() {
 
   // Update schema when dataset selection changes
   useEffect(() => {
+    if (builder.sourceType !== 'dataset') {
+      setSchemaFields([])
+      return
+    }
     const match = datasets.find(d => d.name === builder.dataset || d.id === builder.dataset)
     setSchemaFields(match?.schema ?? [])
-  }, [builder.dataset, datasets])
+  }, [builder.dataset, builder.sourceType, datasets])
 
   // Load pipeline for editing
   useEffect(() => {
     if (!editId) return
     fetch(`/api/pipelines/${editId}`)
       .then(r => r.json())
-      .then((data: { id: string; name: string; description: string; dataset: string; status: 'active' | 'draft'; uiSteps: { id: string; op: string; label: string }[] }) => {
+      .then((data: {
+        id: string
+        name: string
+        description: string
+        dataset: string
+        sourceType?: 'dataset' | 'connector'
+        sourceId?: string
+        resource?: string | null
+        outputTarget?: { mode: 'none' | 'dataset'; datasetId?: string; datasetName?: string } | null
+        status: 'active' | 'draft'
+        uiSteps: { id: string; op: string; label: string }[]
+      }) => {
+        const nextSteps = data.uiSteps.map(s => {
+          const config = defaultConfig(s.op as OpType)
+          if (s.op === 'write' && data.outputTarget?.mode === 'dataset') {
+            if (data.outputTarget.datasetId) {
+              config.targetDatasetId = data.outputTarget.datasetId
+              config.createDataset = false
+            } else {
+              config.createDataset = true
+              config.newDatasetName = data.outputTarget.datasetName ?? ''
+            }
+          }
+          return { id: s.id, op: s.op as OpType, label: s.label, config, invalidated: false }
+        })
         setBuilder(prev => ({
           ...prev,
           pipelineId: data.id, name: data.name, description: data.description,
-          dataset: data.dataset, status: data.status,
-          steps: data.uiSteps.map(s => ({ id: s.id, op: s.op as OpType, label: s.label, config: defaultConfig(s.op as OpType), invalidated: false })),
+          sourceType: data.sourceType ?? 'dataset',
+          dataset: data.sourceId ?? data.dataset,
+          resource: data.resource ?? '',
+          status: data.status,
+          steps: nextSteps,
         }))
       })
       .catch(() => {})
@@ -1291,7 +1363,7 @@ function BuilderInner() {
     sourceCacheRef.current = null
     setCacheInfo(null)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [builder.dataset, sampleSize])
+  }, [builder.dataset, builder.sourceType, builder.resource, sampleSize])
 
   // Auto-preview: fires on step/config/dataset/sampleSize changes; debounced 300 ms
   useEffect(() => {
@@ -1300,7 +1372,7 @@ function BuilderInner() {
     previewTimer.current = setTimeout(doPreview, 300)
     return () => { if (previewTimer.current) clearTimeout(previewTimer.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [builder.selectedStepId, builder.steps, builder.dataset, builder.previewOpen, sampleSize])
+  }, [builder.selectedStepId, builder.steps, builder.dataset, builder.sourceType, builder.resource, builder.previewOpen, sampleSize])
 
   // Keyboard undo / redo (Cmd+Z / Cmd+Shift+Z or Ctrl+Y)
   useEffect(() => {
@@ -1317,7 +1389,7 @@ function BuilderInner() {
     if (!builderRef.current.previewOpen) return
     const b   = builderRef.current
     if (!b.dataset) {
-      setPreview(p => ({ ...p, loading: false, error: 'Select a dataset to preview the pipeline' }))
+      setPreview(p => ({ ...p, loading: false, error: `Select a ${b.sourceType} to preview the pipeline` }))
       return
     }
     const idx = b.steps.findIndex(s => s.id === b.selectedStepId)
@@ -1328,13 +1400,17 @@ function BuilderInner() {
 
     // Check source cache
     const cache   = sourceCacheRef.current
-    const useCache = cache && cache.dataset === b.dataset && cache.size === sampleSize
+    const cacheKey = `${b.sourceType}:${b.dataset}:${b.resource ?? ''}`
+    const useCache = cache && cache.dataset === cacheKey && cache.size === sampleSize
 
     try {
       const res = await fetch('/api/pipelines/preview', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dataset:    b.dataset,
+          sourceType: b.sourceType,
+          sourceId:   b.dataset,
+          resource:   b.resource,
           stepIndex:  effectiveIdx,
           steps:      b.steps.map(s => ({ op: s.op, config: s.config })),
           rowLimit:   sampleSize,
@@ -1356,7 +1432,7 @@ function BuilderInner() {
 
       // Cache source rows returned by server (only on first/refresh fetch)
       if (data.sourceRows && data.sourceRows.length > 0) {
-        sourceCacheRef.current = { rows: data.sourceRows, dataset: b.dataset, size: sampleSize }
+        sourceCacheRef.current = { rows: data.sourceRows, dataset: cacheKey, size: sampleSize }
         setCacheInfo({ size: data.sourceRows.length, fetchedAt: Date.now() })
       }
 
@@ -1439,6 +1515,23 @@ function BuilderInner() {
     })
   }
 
+  function updateSourceType(sourceType: 'dataset' | 'connector') {
+    pushHistory()
+    setBuilder(prev => ({
+      ...prev,
+      sourceType,
+      dataset: sourceType === 'dataset' ? (datasets[0]?.id ?? '') : (connectors[0]?.id ?? ''),
+      resource: '',
+      steps: invalidateStepsForDatasetChange(prev.steps, prev.dataset, sourceType === 'dataset' ? (datasets[0]?.id ?? '') : (connectors[0]?.id ?? '')),
+      dirty: true,
+    }))
+  }
+
+  function updateResource(resource: string) {
+    pushHistory(false)
+    setBuilder(prev => ({ ...prev, resource, dirty: true }))
+  }
+
   function updateStatus() {
     pushHistory()
     setBuilder(prev => ({ ...prev, status: prev.status === 'active' ? 'draft' : 'active', dirty: true }))
@@ -1448,9 +1541,35 @@ function BuilderInner() {
     setSaveError(null)
     setBuilder(prev => ({ ...prev, saving: true }))
     try {
+      const writeStep = [...builder.steps].reverse().find(step => step.op === 'write')
+      const outputTarget = writeStep?.config.createDataset
+        ? {
+            mode: 'dataset' as const,
+            datasetName: writeStep.config.newDatasetName?.trim() || `${builder.name || 'Pipeline'} output`,
+            refreshMode: 'manual' as const,
+          }
+        : writeStep?.config.targetDatasetId
+        ? {
+            mode: 'dataset' as const,
+            datasetId: writeStep.config.targetDatasetId,
+            refreshMode: 'manual' as const,
+          }
+        : { mode: 'none' as const }
+
       const res = await fetch('/api/pipelines', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: builder.pipelineId, name: builder.name || 'Untitled Pipeline', description: builder.description, dataset: builder.dataset, status: builder.status, steps: builder.steps }),
+        body: JSON.stringify({
+          id: builder.pipelineId,
+          name: builder.name || 'Untitled Pipeline',
+          description: builder.description,
+          dataset: builder.dataset,
+          sourceType: builder.sourceType,
+          sourceId: builder.dataset,
+          resource: builder.resource,
+          outputTarget,
+          status: builder.status,
+          steps: builder.steps,
+        }),
       })
       if (!res.ok) { const e = await res.json(); throw new Error(e.error ?? 'Save failed') }
       const created = await res.json()
@@ -1501,16 +1620,34 @@ function BuilderInner() {
           value={builder.name} onChange={e => updateName(e.target.value)}
           placeholder="Pipeline name…" />
 
-        {/* Dataset picker */}
+        {/* Source picker */}
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] text-chef-muted">Source:</span>
+          <select
+            className="bg-chef-card border border-chef-border rounded-lg px-2 py-1.5 text-xs text-chef-text focus:outline-none focus:border-indigo-500/60 transition-colors"
+            value={builder.sourceType}
+            onChange={e => updateSourceType(e.target.value as 'dataset' | 'connector')}>
+            <option value="dataset">Dataset</option>
+            <option value="connector">Connector</option>
+          </select>
           <select
             className="bg-chef-card border border-chef-border rounded-lg px-2.5 py-1.5 text-xs text-chef-text focus:outline-none focus:border-indigo-500/60 transition-colors"
             value={builder.dataset}
             onChange={e => updateDataset(e.target.value)}>
-            {datasets.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-            {datasets.length === 0 && <option value={builder.dataset}>{builder.dataset}</option>}
+            {builder.sourceType === 'dataset'
+              ? datasets.map(d => <option key={d.id} value={d.id}>{d.name}</option>)
+              : connectors.map(connector => <option key={connector.id} value={connector.id}>{connector.name}</option>)}
+            {builder.sourceType === 'dataset' && datasets.length === 0 && <option value={builder.dataset}>{builder.dataset}</option>}
+            {builder.sourceType === 'connector' && connectors.length === 0 && <option value={builder.dataset}>{builder.dataset}</option>}
           </select>
+          {builder.sourceType === 'connector' && (
+            <input
+              className="bg-chef-card border border-chef-border rounded-lg px-2.5 py-1.5 text-xs text-chef-text placeholder:text-chef-muted/60 focus:outline-none focus:border-indigo-500/60 transition-colors w-40"
+              value={builder.resource ?? ''}
+              onChange={e => updateResource(e.target.value)}
+              placeholder="resource / table / query"
+            />
+          )}
         </div>
 
         <button onClick={updateStatus}

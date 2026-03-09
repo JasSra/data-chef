@@ -14,6 +14,8 @@
 import { NextRequest } from 'next/server'
 import { PIPELINE_MAP, workerStart, workerEnd, recordRun } from '@/lib/pipelines'
 import { executePipelineStep, loadPipelineSourceRows } from '@/lib/pipeline-runtime'
+import { inferSchema } from '@/lib/runtime-data'
+import { materializeDataset } from '@/lib/datasets'
 
 function sse(data: object) {
   return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)
@@ -51,7 +53,12 @@ export async function POST(
         }))
 
         if (runtimeSteps?.length) {
-          let rows = await loadPipelineSourceRows(pipeline.dataset, 200)
+          let rows = await loadPipelineSourceRows(
+            pipeline.sourceType ?? 'dataset',
+            pipeline.sourceId ?? pipeline.dataset,
+            pipeline.resource,
+            200,
+          )
           for (let i = 0; i < runtimeSteps.length && !failed; i++) {
             const step = runtimeSteps[i]
             const stepStart = performance.now()
@@ -89,6 +96,47 @@ export async function POST(
               stepsCompleted = i
               failed = true
             }
+          }
+
+          if (!failed && pipeline.outputTarget?.mode === 'dataset') {
+            const datasetName = pipeline.outputTarget.datasetName?.trim()
+            if (!pipeline.outputTarget.datasetId && !datasetName) {
+              throw new Error('Pipeline output target is missing a dataset name')
+            }
+
+            const schema = inferSchema(rows)
+            const sampleRows = rows.slice(0, 5)
+            const dataset = materializeDataset({
+              existingDatasetId: pipeline.outputTarget.datasetId,
+              name: datasetName || `${pipeline.name} output`,
+              source: 'memory',
+              format: 'JSON',
+              description: `Materialized output from pipeline ${pipeline.name}`,
+              connection: `Pipeline ${pipeline.name}`,
+              sourceRef: {
+                sourceType: pipeline.sourceType ?? 'dataset',
+                sourceId: pipeline.sourceId ?? pipeline.dataset,
+                resource: pipeline.resource,
+              },
+              materialization: {
+                kind: 'pipeline',
+                sourceType: pipeline.sourceType ?? 'dataset',
+                sourceId: pipeline.sourceId ?? pipeline.dataset,
+                resource: pipeline.resource,
+                owningPipelineId: pipeline.id,
+                refreshMode: pipeline.outputTarget.refreshMode ?? 'manual',
+                refreshIntervalMinutes: pipeline.outputTarget.refreshIntervalMinutes ?? null,
+              },
+              schema,
+              sampleRows,
+              totalRows: rows.length,
+            })
+            controller.enqueue(sse({
+              type: 'materialized',
+              datasetId: dataset.id,
+              datasetName: dataset.name,
+              rows: rows.length,
+            }))
           }
         } else {
           for (let i = 0; i < pipeline.steps.length && !failed; i++) {

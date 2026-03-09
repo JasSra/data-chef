@@ -1,5 +1,6 @@
 import { executeSQL } from '@/lib/mini-sql'
-import { inferType, loadDatasetRaw, loadDatasetRows, parseSchemaText } from '@/lib/runtime-data'
+import { inferType, loadSourceRaw, loadSourceRows, parseSchemaText } from '@/lib/runtime-data'
+import type { SourceType } from '@/lib/datasets'
 
 export type RuntimeRow = Record<string, unknown>
 export type RuntimeQueryLang = 'sql' | 'jsonpath' | 'jmespath' | 'kql'
@@ -105,11 +106,16 @@ export function previewCell(v: unknown): string {
   return String(v)
 }
 
-export async function loadPipelineSourceRows(dataset: string, rowLimit = 200): Promise<RuntimeRow[]> {
+export async function loadPipelineSourceRows(
+  sourceType: SourceType,
+  sourceId: string,
+  resource?: string,
+  rowLimit = 200,
+): Promise<RuntimeRow[]> {
   try {
-    return await loadDatasetRows(dataset, { rowLimit })
+    return await loadSourceRows({ sourceType, sourceId, resource }, { rowLimit })
   } catch {
-    const raw = await loadDatasetRaw(dataset, { rowLimit })
+    const raw = await loadSourceRaw({ sourceType, sourceId, resource }, { rowLimit })
     return raw.map(item => item && typeof item === 'object' ? item as RuntimeRow : { value: item })
   }
 }

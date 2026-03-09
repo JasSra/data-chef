@@ -5,7 +5,7 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN npm install --ignore-scripts
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 2 — build
@@ -14,6 +14,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_OUTPUT_STANDALONE=1
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -33,7 +34,9 @@ ENV HOSTNAME=0.0.0.0
 
 # Create a non-root user
 RUN addgroup --system --gid 1001 nodejs \
- && adduser  --system --uid 1001 nextjs
+ && adduser  --system --uid 1001 --ingroup nodejs nextjs \
+ && mkdir -p /app/.datachef \
+ && chown -R nextjs:nodejs /app
 
 # Copy standalone server bundle
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

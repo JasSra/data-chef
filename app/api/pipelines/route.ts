@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PIPELINES, buildPipelineResponse, addPipeline, updatePipeline } from '@/lib/pipelines'
 import type { StepDef, UiStep, RuntimeStep } from '@/lib/pipelines'
+import type { SourceType } from '@/lib/datasets'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,7 +38,10 @@ function configSummary(op: string, config: Record<string, unknown>): string {
     case 'enrich':    return config.lookupUrl ? `lookup: ${config.lookupUrl}` : 'HTTP lookup'
     case 'dedupe':    return `key: ${config.dedupeKey ?? '—'} · window: ${config.dedupeWindow ?? '7d'}`
     case 'condition': return `${config.conditionField ?? '$.field'} ${config.conditionOp ?? '=='} ${config.conditionValue ?? '…'}`
-    case 'write':     return config.createDataset ? `→ dataset: ${config.newDatasetName ?? 'new'}` : `${config.destType ?? 'S3'} · ${config.destFormat ?? 'parquet'}`
+    case 'write':
+      if (config.createDataset) return `→ dataset: ${config.newDatasetName ?? 'new'}`
+      if (config.targetDatasetId) return '→ refresh dataset'
+      return `${config.destType ?? 'S3'} · ${config.destFormat ?? 'parquet'}`
     default:          return 'configure step'
   }
 }
@@ -51,14 +55,27 @@ interface BuilderStepBody {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { id, name, description, dataset, status, steps } = body as {
+  const { id, name, description, dataset, sourceType, sourceId, resource, outputTarget, status, steps } = body as {
     id?: string
     name: string
     description: string
     dataset: string
+    sourceType?: SourceType
+    sourceId?: string
+    resource?: string
+    outputTarget?: {
+      mode: 'none' | 'dataset'
+      datasetId?: string
+      datasetName?: string
+      refreshMode?: 'manual' | 'scheduled'
+      refreshIntervalMinutes?: number | null
+    }
     status: 'active' | 'draft'
     steps: BuilderStepBody[]
   }
+
+  const resolvedSourceType = sourceType ?? 'dataset'
+  const resolvedSourceId = sourceId ?? dataset ?? ''
 
   const uiSteps: UiStep[] = steps.map(s => ({
     id:     s.id,
@@ -86,7 +103,12 @@ export async function POST(req: NextRequest) {
   if (id) {
     const updated = updatePipeline(id, {
       name: name || 'Untitled Pipeline',
-      description, dataset,
+      description,
+      dataset: resolvedSourceId,
+      sourceType: resolvedSourceType,
+      sourceId: resolvedSourceId,
+      resource,
+      outputTarget: outputTarget ?? null,
       status: status || 'draft',
       uiSteps,
       steps: stepDefs,
@@ -102,7 +124,11 @@ export async function POST(req: NextRequest) {
   const pipeline = addPipeline({
     name:        name || 'Untitled Pipeline',
     description: description || '',
-    dataset:     dataset || '',
+    dataset:     resolvedSourceId || '',
+    sourceType:  resolvedSourceType,
+    sourceId:    resolvedSourceId,
+    resource,
+    outputTarget: outputTarget ?? null,
     status:      status || 'draft',
     avgDuration: '—',
     steps:       stepDefs,

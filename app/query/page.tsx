@@ -7,9 +7,10 @@ import {
   ArrowRight, History, ChevronRight, X, Server,
   BarChart2, Clock, Plus, Trash2, Database, Save,
 } from 'lucide-react'
+import { useAppSettings } from '@/components/SettingsProvider'
 
 /* ── Types ──────────────────────────────────────────────────────────────────── */
-type Lang = 'sql' | 'jsonpath' | 'jmespath' | 'kql'
+type Lang = 'sql' | 'jsonpath' | 'jmespath' | 'kql' | 'redis'
 
 interface SchemaField { field: string; type: string }
 
@@ -18,6 +19,10 @@ interface DatasetMeta {
   name:   string
   badge:  string
   desc:   string
+  sourceType: 'dataset' | 'connector'
+  sourceId: string
+  connectorType?: string
+  resource?: string
   fields: string[]      // just names — for autocomplete
   schema: SchemaField[] // full schema — for the fields panel
 }
@@ -26,19 +31,50 @@ interface QResult {
   columns: string[]; rows: string[][]
   rowCount: number; totalRows: number
   bytesScanned: number; durationMs: number
-  kqlTranslated?: string; error?: string
+  kqlTranslated?: string; provider?: string; error?: string
 }
 
 interface HistoryEntry {
   id: string; lang: Lang; dataset: string
   query: string; rowCount: number
   durationMs: number; ts: number; error?: string
+  redisMode?: RedisMode
+  redisValueType?: RedisValueType
 }
 
 interface SavedQuery { id: string; lang: Lang; name: string; query: string }
 
-interface AiConnector { id: string; name: string; type: string }
-interface SavedAiQuery { id: string; name: string; kql: string; createdAt: number }
+interface ObservabilityConnector { id: string; name: string; type: string }
+interface SavedObservabilityQuery { id: string; name: string; kql: string; createdAt: number }
+type RedisMode = 'command' | 'search' | 'json' | 'timeseries' | 'stream' | 'catalog'
+type RedisValueType = 'auto' | 'string' | 'hash' | 'list' | 'set' | 'zset' | 'json' | 'timeseries' | 'stream' | 'search'
+type RedisCatalogKind = 'commands' | 'capabilities' | 'keyspaces' | 'keys' | 'indexes' | 'streams'
+
+interface RedisCapabilitySnapshot {
+  serverKind: 'redis' | 'redis-stack'
+  redisVersion: string
+  modules: string[]
+  supportsSearch: boolean
+  supportsJson: boolean
+  supportsTimeSeries: boolean
+  supportsBloom: boolean
+  supportsGraph: boolean
+  supportsStreams: boolean
+  dbCount: number | null
+  error?: string
+}
+
+interface RedisCatalogResult {
+  columns: string[]
+  rows: string[][]
+  rowCount: number
+  totalRows: number
+  durationMs: number
+  redisMode: RedisMode
+  capabilities?: RedisCapabilitySnapshot
+  catalogMeta?: Record<string, unknown>
+  error?: string
+}
 
 const AI_TIMESPAN_PRESETS = [
   { label: 'Last 1h',  value: 'PT1H'  },
@@ -48,12 +84,28 @@ const AI_TIMESPAN_PRESETS = [
   { label: 'Last 30d', value: 'P30D'  },
 ]
 
+function defaultObservabilityKql(type: string): string {
+  if (type === 'elasticsearch') return 'logs\n| where @timestamp > ago(24h)\n| limit 100'
+  if (type === 'datadog') return 'logs\n| where status:error\n| limit 100'
+  return 'requests\n| where timestamp > ago(24h)\n| summarize count() by bin(timestamp, 1h)\n| order by timestamp asc'
+}
+
 /* ── Language config ─────────────────────────────────────────────────────────── */
 const langMeta: Record<Lang, { label: string; color: string }> = {
   sql:      { label: 'SQL',      color: 'text-sky-400'    },
   jsonpath: { label: 'JSONPath', color: 'text-violet-400' },
   jmespath: { label: 'JMESPath', color: 'text-emerald-400'},
   kql:      { label: 'KQL',      color: 'text-amber-400'  },
+  redis:    { label: 'Redis',    color: 'text-red-400'    },
+}
+
+const REDIS_MODE_TEMPLATES: Record<RedisMode, string> = {
+  command: 'SCAN 0 MATCH * COUNT 50',
+  search: 'FT.SEARCH idx:documents "*" LIMIT 0 25',
+  json: 'JSON.GET user:42 $',
+  timeseries: 'TS.RANGE metrics:cpu - +',
+  stream: 'XRANGE orders:stream - + COUNT 50',
+  catalog: 'commands',
 }
 
 /* ── Field type colours ──────────────────────────────────────────────────────── */
@@ -157,6 +209,118 @@ function timeAgo(ts: number) {
   return `${Math.floor(s / 3600)}h ago`
 }
 
+type SortDirection = 'asc' | 'desc'
+type SortState = { column: string; direction: SortDirection }
+
+function formatSqlIdentifier(column: string) {
+  return /^\w+$/.test(column) ? column : `"${column.replace(/"/g, '""')}"`
+}
+
+function formatKqlIdentifier(column: string) {
+  return /^\w+$/.test(column) ? column : `['${column.replace(/'/g, "''")}']`
+}
+
+function detectQuerySort(queryText: string, currentLang: Lang): SortState | null {
+  if (currentLang === 'sql') {
+    const upper = queryText.toUpperCase()
+    const orderMatches = [...upper.matchAll(/\bORDER\s+BY\b/g)]
+    const orderIdx = orderMatches.length ? (orderMatches[orderMatches.length - 1].index ?? -1) : -1
+    if (orderIdx === -1) return null
+    const limitMatches = [...upper.matchAll(/\bLIMIT\b/g)]
+    const limitIdx = limitMatches.length ? (limitMatches[limitMatches.length - 1].index ?? -1) : -1
+    const clause = queryText.slice(orderIdx, limitIdx > orderIdx ? limitIdx : undefined)
+      .replace(/^ORDER\s+BY\s+/i, '')
+      .trim()
+    const match = clause.match(/^(.+?)(?:\s+(ASC|DESC))?\s*$/i)
+    if (!match) return null
+    const rawColumn = match[1].trim()
+    return {
+      column: rawColumn.replace(/^"(.*)"$/, '$1'),
+      direction: match[2]?.toLowerCase() === 'desc' ? 'desc' : 'asc',
+    }
+  }
+
+  if (currentLang === 'kql') {
+    const stages = queryText.replace(/\/\/[^\n]*/g, '').split('|').map(s => s.trim()).filter(Boolean)
+    const sortStage = stages.slice().reverse().find(stage => /^(order|sort)\s+by\s+/i.test(stage))
+    if (!sortStage) return null
+    const clause = sortStage.replace(/^(order|sort)\s+by\s+/i, '').trim()
+    const match = clause.match(/^(.+?)(?:\s+(asc|desc))?\s*$/i)
+    if (!match) return null
+    return {
+      column: match[1].trim().replace(/^\['(.+)'\]$/, '$1').replace(/''/g, "'"),
+      direction: match[2]?.toLowerCase() === 'desc' ? 'desc' : 'asc',
+    }
+  }
+
+  return null
+}
+
+function rewriteSqlSort(queryText: string, column: string, direction: SortDirection) {
+  const trimmed = queryText.trim().replace(/;+\s*$/, '')
+  const upper = trimmed.toUpperCase()
+  const orderMatches = [...upper.matchAll(/\bORDER\s+BY\b/g)]
+  const limitMatches = [...upper.matchAll(/\bLIMIT\b/g)]
+  const orderIdx = orderMatches.length ? (orderMatches[orderMatches.length - 1].index ?? -1) : -1
+  const limitIdx = limitMatches.length ? (limitMatches[limitMatches.length - 1].index ?? -1) : -1
+  const sortClause = `ORDER BY ${formatSqlIdentifier(column)} ${direction.toUpperCase()}`
+
+  if (orderIdx !== -1 && (limitIdx === -1 || orderIdx < limitIdx)) {
+    const before = trimmed.slice(0, orderIdx).trimEnd()
+    const after = limitIdx > orderIdx ? trimmed.slice(limitIdx).trim() : ''
+    return after ? `${before}\n${sortClause}\n${after}` : `${before}\n${sortClause}`
+  }
+
+  if (limitIdx !== -1) {
+    const before = trimmed.slice(0, limitIdx).trimEnd()
+    const after = trimmed.slice(limitIdx).trim()
+    return `${before}\n${sortClause}\n${after}`
+  }
+
+  return `${trimmed}\n${sortClause}`
+}
+
+function rewriteKqlSort(queryText: string, column: string, direction: SortDirection) {
+  const stages = queryText.split('|').map(s => s.trim()).filter(Boolean)
+  if (stages.length === 0) return queryText
+
+  const [source, ...rawOps] = stages
+  const ops = rawOps.filter(op => !/^(order|sort)\s+by\s+/i.test(op))
+  const sortClause = `order by ${formatKqlIdentifier(column)} ${direction}`
+  const limitIdx = ops.findIndex(op => /^(limit|take|top)\s+\d+/i.test(op))
+
+  if (limitIdx === -1) ops.push(sortClause)
+  else ops.splice(limitIdx, 0, sortClause)
+
+  return [source, ...ops.map(op => `| ${op}`)].join('\n')
+}
+
+function normalizeObjectLikeCell(cell: string) {
+  if (!cell.includes('[object Object]')) return cell
+  const parts = cell.split(',').map(part => part.trim())
+  if (parts.every(part => part === '[object Object]')) {
+    return `[Object × ${parts.length}]`
+  }
+  return cell.replace(/\[object Object\]/g, '{...}')
+}
+
+function renderCellValue(cell: string) {
+  return normalizeObjectLikeCell(cell)
+}
+
+function encodeDelimitedValue(value: string, delimiter: ',' | '\t') {
+  const needsQuotes = value.includes(delimiter) || value.includes('\n') || value.includes('\r') || value.includes('"')
+  const escaped = value.replace(/"/g, '""')
+  return needsQuotes ? `"${escaped}"` : escaped
+}
+
+function rowsToDelimited(columns: string[], rows: string[][], delimiter: ',' | '\t') {
+  return [
+    columns.map(column => encodeDelimitedValue(column, delimiter)).join(delimiter),
+    ...rows.map(row => row.map(cell => encodeDelimitedValue(renderCellValue(cell), delimiter)).join(delimiter)),
+  ].join('\n')
+}
+
 const HISTORY_KEY = 'datachef:queryHistory'
 function loadHistory(): HistoryEntry[] {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') } catch { return [] }
@@ -167,9 +331,11 @@ function saveHistory(h: HistoryEntry[]) {
 
 /* ── Fallback datasets (shown immediately before API loads) ──────────────────── */
 const FALLBACK_DATASETS: DatasetMeta[] = []
+const GENERIC_QUERYABLE_CONNECTOR_TYPES = ['http', 'postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery', 'azureb2c', 'azureentraid']
 
 /* ── Page ─────────────────────────────────────────────────────────────────────── */
 export default function QueryPage() {
+  const { settings } = useAppSettings()
   const [allDatasets,   setAllDatasets]   = useState<DatasetMeta[]>(FALLBACK_DATASETS)
   const [dataset,       setDataset]       = useState('')
   const [lang,          setLang]          = useState<Lang>('sql')
@@ -182,20 +348,34 @@ export default function QueryPage() {
   const [showHistory,   setShowHistory]   = useState(false)
   const [showSchema,    setShowSchema]    = useState(true)
   const [history,       setHistory]       = useState<HistoryEntry[]>([])
+  const [sortState,     setSortState]     = useState<SortState | null>(null)
+  const [selectedRows,  setSelectedRows]  = useState<number[]>([])
+  const [lastSelectedRow, setLastSelectedRow] = useState<number | null>(null)
+  const [copyFeedback,  setCopyFeedback]  = useState<'selected' | 'all' | null>(null)
 
-  /* App Insights mode */
-  const [aiConnectors,     setAiConnectors]     = useState<AiConnector[]>([])
+  /* Observability mode */
+  const [aiConnectors,     setAiConnectors]     = useState<ObservabilityConnector[]>([])
+  const [genericConnectors, setGenericConnectors] = useState<ObservabilityConnector[]>([])
   const [aiConnectorId,    setAiConnectorId]    = useState<string | null>(null)
   const [aiTimespan,       setAiTimespan]       = useState('PT24H')
   const [showAiTimeMenu,   setShowAiTimeMenu]   = useState(false)
   const [showAiConnMenu,   setShowAiConnMenu]   = useState(false)
-  const [aiSavedQueries,   setAiSavedQueries]   = useState<SavedAiQuery[]>([])
+  const [aiSavedQueries,   setAiSavedQueries]   = useState<SavedObservabilityQuery[]>([])
   const [showSaveAiInput,  setShowSaveAiInput]  = useState(false)
   const [saveAiName,       setSaveAiName]       = useState('')
   const [storeLocally,     setStoreLocally]     = useState(false)
   const [storeDatasetName, setStoreDatasetName] = useState('')
   const [storedNotice,     setStoredNotice]     = useState<string | null>(null)
+  const [redisConnectors,  setRedisConnectors]  = useState<ObservabilityConnector[]>([])
+  const [redisConnectorId, setRedisConnectorId] = useState<string | null>(null)
+  const [showRedisConnMenu, setShowRedisConnMenu] = useState(false)
+  const [redisMode,        setRedisMode]        = useState<RedisMode>('command')
+  const [redisValueType,   setRedisValueType]   = useState<RedisValueType>('auto')
+  const [redisCatalogKind, setRedisCatalogKind] = useState<RedisCatalogKind>('commands')
+  const [redisCapabilities, setRedisCapabilities] = useState<RedisCapabilitySnapshot | null>(null)
+  const [redisCatalog,     setRedisCatalog]     = useState<Array<Record<string, string>>>([])
   const isAiMode = aiConnectorId !== null
+  const isRedisMode = redisConnectorId !== null
 
   /* Autocomplete */
   const [acList,   setAcList]   = useState<string[]>([])
@@ -205,14 +385,38 @@ export default function QueryPage() {
 
   const textareaRef  = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLDivElement>(null)
+  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const dsMeta = allDatasets.find(d => d.id === dataset) ?? allDatasets[0]
+  const autoRanRef = useRef(false)
+  const isGenericConnectorMode = dsMeta?.sourceType === 'connector'
+  const visibleRowCount = results?.rows.length ?? 0
+  const hasSelection = selectedRows.length > 0
+  const allVisibleSelected = visibleRowCount > 0 && selectedRows.length === visibleRowCount
+  const someVisibleSelected = selectedRows.length > 0 && selectedRows.length < visibleRowCount
+  const canRewriteSort = !!results && (lang === 'sql' || lang === 'kql')
 
   function defaultQueryFor(dsId: string, l: Lang): string {
+    const meta = allDatasets.find(d => d.id === dsId)
+    if (meta?.sourceType === 'connector') {
+      if (meta.connectorType === 'postgresql' || meta.connectorType === 'mysql' || meta.connectorType === 'bigquery') {
+        return 'SELECT *\nFROM source_rows\nLIMIT 100'
+      }
+      if (meta.connectorType === 'azureb2c' || meta.connectorType === 'azureentraid') {
+        return 'SELECT *\nFROM source_rows\nLIMIT 100'
+      }
+      return l === 'kql'
+        ? 'source_rows\n| limit 100'
+        : l === 'jsonpath'
+        ? '$[*]'
+        : l === 'jmespath'
+        ? '[*]'
+        : 'SELECT *\nFROM source_rows\nLIMIT 100'
+    }
     const qs = savedQueriesMap[dsId]
     if (qs) return qs.find(q => q.lang === l)?.query ?? qs[0].query
-    const ds = allDatasets.find(d => d.id === dsId)
-    const tbl = (ds?.name ?? dsId).replace(/-/g, '_')
+    const tbl = (meta?.name ?? dsId).replace(/-/g, '_')
+    if (l === 'redis') return REDIS_MODE_TEMPLATES.command
     if (l === 'kql') return `${tbl}\n| limit 50`
     return `SELECT *\nFROM ${tbl}\nLIMIT 100`
   }
@@ -232,13 +436,15 @@ export default function QueryPage() {
     ]
   }
 
-  /* Load history + fetch datasets + App Insights connectors */
+  /* Load history + fetch datasets + observability connectors */
   useEffect(() => {
     setHistory(loadHistory())
     fetch('/api/connectors')
       .then(r => r.json())
-      .then((list: AiConnector[]) => {
-        setAiConnectors(list.filter(c => c.type === 'appinsights'))
+      .then((list: ObservabilityConnector[]) => {
+        setAiConnectors(list.filter(c => ['appinsights', 'azuremonitor', 'elasticsearch', 'datadog'].includes(c.type)))
+        setRedisConnectors(list.filter(c => c.type === 'redis'))
+        setGenericConnectors(list.filter(c => GENERIC_QUERYABLE_CONNECTOR_TYPES.includes(c.type)))
       })
       .catch(() => {})
     fetch('/api/datasets')
@@ -253,19 +459,37 @@ export default function QueryPage() {
           name:   d.name,
           badge:  d.records,
           desc:   d.description,
+          sourceType: 'dataset',
+          sourceId: d.queryDataset ?? d.name,
           fields: d.schema?.map(f => f.field) ?? [],
           schema: d.schema?.map(f => ({ field: f.field, type: f.type })) ?? [],
         }))
-        setAllDatasets(metas)
-        if (!dataset && metas[0]) {
-          setDataset(metas[0].id)
-          setQuery(defaultQueryFor(metas[0].id, 'sql'))
+        const connectorMetas: DatasetMeta[] = genericConnectors.map(connector => ({
+          id: `connector:${connector.id}`,
+          name: connector.name,
+          badge: 'live',
+          desc: `${connector.type} connector`,
+          sourceType: 'connector',
+          sourceId: connector.id,
+          connectorType: connector.type,
+          fields: [],
+          schema: [],
+        }))
+        const combined = [...metas, ...connectorMetas]
+        setAllDatasets(combined)
+        if (!dataset && combined[0]) {
+          const preferred = settings?.queryEngine.defaultDataset
+            ? combined.find(meta => meta.id === settings.queryEngine.defaultDataset)
+            : null
+          const initial = preferred ?? combined[0]
+          setDataset(initial.id)
+          setQuery(defaultQueryFor(initial.id, 'sql'))
         }
 
         const jumpTo = localStorage.getItem('datachef:jumpToDataset')
         if (jumpTo) {
           localStorage.removeItem('datachef:jumpToDataset')
-          const found = metas.find(d => d.id === jumpTo || d.name === jumpTo)
+          const found = combined.find(d => d.id === jumpTo || d.name === jumpTo)
           if (found) {
             setDataset(found.id)
             const qs = savedQueriesMap[found.id]
@@ -276,6 +500,26 @@ export default function QueryPage() {
       })
       .catch(() => { /* keep fallback */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genericConnectors, settings?.queryEngine.defaultDataset])
+
+  useEffect(() => {
+    function syncHistory() {
+      setHistory(loadHistory())
+    }
+
+    window.addEventListener('storage', syncHistory)
+    return () => window.removeEventListener('storage', syncHistory)
+  }, [])
+
+  useEffect(() => {
+    setSelectedRows([])
+    setLastSelectedRow(null)
+    setCopyFeedback(null)
+    setSortState(results ? detectQuerySort(query, lang) : null)
+  }, [results, query, lang])
+
+  useEffect(() => () => {
+    if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current)
   }, [])
 
   function handleLangChange(l: Lang) {
@@ -284,7 +528,11 @@ export default function QueryPage() {
   }
 
   function handleDatasetChange(d: string) {
-    setDataset(d); setQuery(defaultQueryFor(d, lang))
+    setAiConnectorId(null)
+    setRedisConnectorId(null)
+    const nextLang = lang === 'redis' ? 'sql' : lang
+    setLang(nextLang)
+    setDataset(d); setQuery(defaultQueryFor(d, nextLang))
     setResults(null); setQueryError(null); setShowDataMenu(false); dismissAc()
   }
 
@@ -321,7 +569,8 @@ export default function QueryPage() {
     const low      = word.toLowerCase()
 
     const fields = dsMeta?.fields ?? []
-    const items  = [...new Set([...fields, ...SQL_KW])]
+    const redisItems = redisCatalog.flatMap(item => Object.values(item))
+    const items  = [...new Set([...fields, ...SQL_KW, ...redisItems])]
       .filter(c => c.toLowerCase().startsWith(low) && c.toLowerCase() !== low)
       .slice(0, 8)
 
@@ -382,16 +631,17 @@ export default function QueryPage() {
   }
 
   /* ── Run query ─────────────────────────────────────────────────────────────── */
-  const handleRun = useCallback(async () => {
+  const handleRun = useCallback(async (queryOverride?: string) => {
     if (running) return
+    const effectiveQuery = queryOverride ?? query
     setRunning(true); setResults(null); setQueryError(null); setStoredNotice(null); dismissAc()
 
-    /* ── App Insights branch ── */
+    /* ── Observability branch ── */
     if (isAiMode) {
       try {
-        const res = await fetch('/api/appinsights/query', {
+        const res = await fetch('/api/observability/query', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectorId: aiConnectorId, kql: query, timespan: aiTimespan }),
+          body: JSON.stringify({ connectorId: aiConnectorId, kql: effectiveQuery, timespan: aiTimespan }),
         })
         const data: QResult = await res.json()
 
@@ -400,21 +650,46 @@ export default function QueryPage() {
         } else {
           setResults(data)
 
-          /* Optional local storage of results */
-          if (storeLocally) {
-            const name = storeDatasetName.trim() || `ai-result-${Date.now()}`
+          if (storeLocally && aiConnectorId) {
+            const connector = aiConnectors.find(item => item.id === aiConnectorId)
+            const name = storeDatasetName.trim() || `${connector?.name ?? 'observability'} snapshot`
             try {
-              const key = `datachef:airesult:${Date.now()}`
-              localStorage.setItem(key, JSON.stringify({ name, columns: data.columns, rows: data.rows }))
+              const schema = data.columns.map(field => ({ field, type: 'string', nullable: true, example: '' }))
+              const sampleRows = data.rows.slice(0, 5).map(row =>
+                Object.fromEntries(data.columns.map((column, index) => [column, row[index] ?? null])),
+              )
+              const response = await fetch('/api/datasets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name,
+                  source: 'conn',
+                  format: 'JSON',
+                  connectorId: aiConnectorId,
+                  connection: connector?.name ?? 'Observability',
+                  resource: effectiveQuery,
+                  description: `${connector?.name ?? 'Observability'} materialized query result`,
+                  schema,
+                  sampleRows,
+                  totalRows: data.totalRows,
+                }),
+              })
+              if (!response.ok) {
+                const failure = await response.json().catch(() => ({ error: 'Dataset creation failed' }))
+                throw new Error(String(failure.error ?? 'Dataset creation failed'))
+              }
               setStoredNotice(`Saved as "${name}"`)
               setTimeout(() => setStoredNotice(null), 3000)
-            } catch { /* noop */ }
+            } catch (error: unknown) {
+              setStoredNotice(error instanceof Error ? error.message : String(error))
+              setTimeout(() => setStoredNotice(null), 3000)
+            }
           }
 
           const entry: HistoryEntry = {
             id: crypto.randomUUID(), lang: 'kql',
-            dataset: aiConnectorId ?? 'appinsights',
-            query, rowCount: data.rowCount, durationMs: data.durationMs, ts: Date.now(),
+            dataset: aiConnectorId ?? 'observability',
+            query: effectiveQuery, rowCount: data.rowCount, durationMs: data.durationMs, ts: Date.now(),
           }
           const next = [entry, ...history].slice(0, 50); setHistory(next); saveHistory(next)
         }
@@ -424,56 +699,257 @@ export default function QueryPage() {
       return
     }
 
-    /* ── Standard dataset branch ── */
+    if (isRedisMode) {
+      try {
+        const res = await fetch('/api/redis/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connectorId: redisConnectorId,
+            mode: redisMode,
+            query: redisMode === 'catalog' ? effectiveQuery || redisCatalogKind : effectiveQuery,
+            valueType: redisValueType,
+            catalog: redisCatalogKind,
+            rowLimit: settings?.queryEngine.maxRows,
+          }),
+        })
+        const data: QResult & { capabilities?: RedisCapabilitySnapshot } = await res.json()
+        if (data.error) {
+          setQueryError(data.error)
+        } else {
+          setResults({
+            ...data,
+            bytesScanned: 0,
+          })
+          if (data.capabilities) setRedisCapabilities(data.capabilities)
+        }
+        const entry: HistoryEntry = {
+          id: crypto.randomUUID(),
+          lang: 'redis',
+          dataset: redisConnectorId ?? 'redis',
+          query: effectiveQuery,
+          rowCount: data.rowCount ?? 0,
+          durationMs: data.durationMs ?? 0,
+          ts: Date.now(),
+          error: data.error,
+          redisMode,
+          redisValueType,
+        }
+        const next = [entry, ...history].slice(0, 50); setHistory(next); saveHistory(next)
+      } catch (e: unknown) {
+        setQueryError(e instanceof Error ? e.message : String(e))
+      } finally { setRunning(false) }
+      return
+    }
+
+    /* ── Standard dataset / live connector branch ── */
     try {
+      const activeSource = allDatasets.find(item => item.id === dataset)
       const res  = await fetch('/api/query', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql: query, lang, dataset }),
+        body: JSON.stringify({
+          sql: effectiveQuery,
+          lang,
+          dataset,
+          sourceType: activeSource?.sourceType ?? 'dataset',
+          sourceId: activeSource?.sourceId ?? dataset,
+          resource: activeSource?.resource,
+          rowLimit: settings?.queryEngine.maxRows,
+        }),
       })
       const data: QResult = await res.json()
 
       if (data.error) {
         setQueryError(data.error)
-        const entry: HistoryEntry = { id: crypto.randomUUID(), lang, dataset, query, rowCount: 0, durationMs: data.durationMs ?? 0, ts: Date.now(), error: data.error }
+        const entry: HistoryEntry = { id: crypto.randomUUID(), lang, dataset, query: effectiveQuery, rowCount: 0, durationMs: data.durationMs ?? 0, ts: Date.now(), error: data.error }
         const next = [entry, ...history].slice(0, 50); setHistory(next); saveHistory(next)
       } else {
         setResults(data)
-        const entry: HistoryEntry = { id: crypto.randomUUID(), lang, dataset, query, rowCount: data.rowCount, durationMs: data.durationMs, ts: Date.now() }
+        if (activeSource?.sourceType === 'connector' && storeLocally) {
+          const name = storeDatasetName.trim() || `${activeSource.name} snapshot`
+          const schema = data.columns.map(field => ({ field, type: 'string', nullable: true, example: '' }))
+          const sampleRows = data.rows.slice(0, 5).map(row =>
+            Object.fromEntries(data.columns.map((column, index) => [column, row[index] ?? null])),
+          )
+          const response = await fetch('/api/datasets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name,
+              source: 'conn',
+              format: 'JSON',
+              connectorId: activeSource.sourceId,
+              connection: activeSource.name,
+              resource: effectiveQuery,
+              description: `${activeSource.name} materialized query result`,
+              schema,
+              sampleRows,
+              totalRows: data.totalRows,
+              sourceRef: {
+                sourceType: 'connector',
+                sourceId: activeSource.sourceId,
+                resource: query,
+              },
+              materialization: {
+                kind: 'connector',
+                sourceType: 'connector',
+                sourceId: activeSource.sourceId,
+                resource: effectiveQuery,
+                refreshMode: 'manual',
+              },
+            }),
+          })
+        if (response.ok) {
+          setStoredNotice(`Saved as "${name}"`)
+          setTimeout(() => setStoredNotice(null), 3000)
+        }
+      }
+        const entry: HistoryEntry = { id: crypto.randomUUID(), lang, dataset, query: effectiveQuery, rowCount: data.rowCount, durationMs: data.durationMs, ts: Date.now() }
         const next = [entry, ...history].slice(0, 50); setHistory(next); saveHistory(next)
       }
     } catch (e: unknown) {
       setQueryError(e instanceof Error ? e.message : String(e))
     } finally { setRunning(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, lang, dataset, running, history, isAiMode, aiConnectorId, aiTimespan, storeLocally, storeDatasetName])
+  }, [query, lang, dataset, running, history, isAiMode, isRedisMode, aiConnectorId, aiTimespan, redisConnectorId, redisMode, redisValueType, redisCatalogKind, storeLocally, storeDatasetName, settings?.queryEngine.maxRows, allDatasets])
 
-  /* Load saved queries when AI connector changes */
+  function showCopyFeedback(kind: 'selected' | 'all') {
+    setCopyFeedback(kind)
+    if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current)
+    copyFeedbackTimerRef.current = setTimeout(() => setCopyFeedback(null), 1600)
+  }
+
+  async function copyRowsToClipboard(mode: 'selected' | 'all') {
+    if (!results) return
+    const indexes = mode === 'selected' && selectedRows.length > 0
+      ? selectedRows
+      : results.rows.map((_, index) => index)
+    const rows = indexes.map(index => results.rows[index])
+    const payload = rowsToDelimited(results.columns, rows, '\t')
+    await navigator.clipboard.writeText(payload)
+    showCopyFeedback(mode === 'selected' && selectedRows.length > 0 ? 'selected' : 'all')
+  }
+
+  function handleToggleAllRows() {
+    if (!results) return
+    if (allVisibleSelected) {
+      setSelectedRows([])
+      setLastSelectedRow(null)
+      return
+    }
+    setSelectedRows(results.rows.map((_, index) => index))
+    setLastSelectedRow(results.rows.length > 0 ? results.rows.length - 1 : null)
+  }
+
+  function handleToggleRow(index: number, event: React.MouseEvent<HTMLInputElement>) {
+    event.preventDefault()
+    if (!results) return
+    setSelectedRows(prev => {
+      const next = new Set(prev)
+      if (event.shiftKey && lastSelectedRow !== null) {
+        const [start, end] = [lastSelectedRow, index].sort((left, right) => left - right)
+        if (!event.metaKey && !event.ctrlKey) next.clear()
+        for (let rowIndex = start; rowIndex <= end; rowIndex++) next.add(rowIndex)
+      } else if (event.metaKey || event.ctrlKey) {
+        if (next.has(index)) next.delete(index)
+        else next.add(index)
+      } else {
+        const isOnlySelected = prev.length === 1 && prev[0] === index
+        next.clear()
+        if (!isOnlySelected) next.add(index)
+      }
+      return Array.from(next).sort((left, right) => left - right)
+    })
+    setLastSelectedRow(index)
+  }
+
+  async function handleHeaderSort(column: string) {
+    if (!canRewriteSort) return
+    const nextDirection: SortDirection =
+      sortState?.column === column && sortState.direction === 'asc' ? 'desc' : 'asc'
+    const nextQuery = lang === 'kql'
+      ? rewriteKqlSort(query, column, nextDirection)
+      : rewriteSqlSort(query, column, nextDirection)
+
+    setSortState({ column, direction: nextDirection })
+    setQuery(nextQuery)
+    await handleRun(nextQuery)
+  }
+
+  useEffect(() => {
+    if (!settings?.queryEngine.autoExecuteOnOpen || autoRanRef.current || isAiMode || isRedisMode || !dataset || !query.trim()) return
+    autoRanRef.current = true
+    void handleRun()
+  }, [dataset, handleRun, isAiMode, isRedisMode, query, settings?.queryEngine.autoExecuteOnOpen])
+
+  /* Load saved queries when observability connector changes */
   useEffect(() => {
     if (!aiConnectorId) return
-    fetch(`/api/appinsights/saved-queries?connectorId=${aiConnectorId}`)
+    fetch(`/api/observability/saved-queries?connectorId=${aiConnectorId}`)
       .then(r => r.json())
-      .then((qs: SavedAiQuery[]) => setAiSavedQueries(qs))
+      .then((qs: SavedObservabilityQuery[]) => setAiSavedQueries(qs))
       .catch(() => setAiSavedQueries([]))
   }, [aiConnectorId])
 
+  useEffect(() => {
+    if (!redisConnectorId) return
+    fetch(`/api/redis/query?connectorId=${redisConnectorId}`)
+      .then(r => r.json())
+      .then((caps: RedisCapabilitySnapshot) => { if (!caps.error) setRedisCapabilities(caps) })
+      .catch(() => setRedisCapabilities(null))
+  }, [redisConnectorId])
+
+  useEffect(() => {
+    if (!redisConnectorId) return
+    fetch(`/api/redis/catalog?connectorId=${redisConnectorId}&catalog=${redisCatalogKind}&limit=50`)
+      .then(r => r.json())
+      .then((payload: RedisCatalogResult) => {
+        if (payload.error) {
+          setRedisCatalog([])
+          return
+        }
+        if (payload.capabilities) setRedisCapabilities(payload.capabilities)
+        const rows = payload.rows.map(row => Object.fromEntries(payload.columns.map((column, index) => [column, row[index] ?? ''])))
+        setRedisCatalog(rows)
+      })
+      .catch(() => setRedisCatalog([]))
+  }, [redisCatalogKind, redisConnectorId])
+
   function handleSelectAiConnector(id: string | null) {
     setAiConnectorId(id)
+    setRedisConnectorId(null)
     setShowAiConnMenu(false)
     setResults(null); setQueryError(null); dismissAc()
     if (id) {
+      const connector = aiConnectors.find(item => item.id === id)
       setLang('kql')
-      setQuery('requests\n| where timestamp > ago(24h)\n| summarize count() by bin(timestamp, 1h)\n| order by timestamp asc')
+      setQuery(defaultObservabilityKql(connector?.type ?? 'appinsights'))
+    } else {
+      setLang('sql')
+    }
+  }
+
+  function handleSelectRedisConnector(id: string | null) {
+    setRedisConnectorId(id)
+    setAiConnectorId(null)
+    setShowRedisConnMenu(false)
+    setResults(null); setQueryError(null); dismissAc()
+    if (id) {
+      setLang('redis')
+      setQuery(REDIS_MODE_TEMPLATES[redisMode])
+    } else {
+      setLang('sql')
     }
   }
 
   async function handleSaveAiQuery() {
     if (!aiConnectorId || !saveAiName.trim() || !query.trim()) return
     try {
-      const res = await fetch('/api/appinsights/saved-queries', {
+      const res = await fetch('/api/observability/saved-queries', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connectorId: aiConnectorId, name: saveAiName.trim(), kql: query }),
       })
-      const q = await res.json() as SavedAiQuery
+      const q = await res.json() as SavedObservabilityQuery
       setAiSavedQueries(prev => [...prev, q])
       setSaveAiName(''); setShowSaveAiInput(false)
     } catch {}
@@ -481,11 +957,14 @@ export default function QueryPage() {
 
   async function handleDeleteAiQuery(queryId: string) {
     if (!aiConnectorId) return
-    await fetch(`/api/appinsights/saved-queries?connectorId=${aiConnectorId}&queryId=${queryId}`, { method: 'DELETE' })
+    await fetch(`/api/observability/saved-queries?connectorId=${aiConnectorId}&queryId=${queryId}`, { method: 'DELETE' })
     setAiSavedQueries(prev => prev.filter(q => q.id !== queryId))
   }
 
-  const aiConnectorName = aiConnectors.find(c => c.id === aiConnectorId)?.name ?? 'App Insights'
+  const aiConnector = aiConnectors.find(c => c.id === aiConnectorId) ?? null
+  const aiConnectorName = aiConnector?.name ?? 'Observability'
+  const redisConnector = redisConnectors.find(c => c.id === redisConnectorId) ?? null
+  const redisConnectorName = redisConnector?.name ?? 'Redis'
   const aiTimespanLabel = AI_TIMESPAN_PRESETS.find(p => p.value === aiTimespan)?.label ?? aiTimespan
   const lineCount    = query.split('\n').length
   const savedQueries = getSavedQueries()
@@ -507,7 +986,27 @@ export default function QueryPage() {
             ? <div className="px-3 py-4 text-[10px] text-chef-muted text-center">No history yet</div>
             : history.map(h => (
               <button key={h.id}
-                onClick={() => { setLang(h.lang); setQuery(h.query); setDataset(h.dataset); setResults(null); setQueryError(null) }}
+                onClick={() => {
+                  const obs = aiConnectors.find(conn => conn.id === h.dataset)
+                  const redis = redisConnectors.find(conn => conn.id === h.dataset)
+                  setLang(h.lang)
+                  setQuery(h.query)
+                  if (obs) {
+                    setAiConnectorId(obs.id)
+                    setRedisConnectorId(null)
+                  } else if (redis) {
+                    setRedisConnectorId(redis.id)
+                    setAiConnectorId(null)
+                    setRedisMode(h.redisMode ?? 'command')
+                    setRedisValueType(h.redisValueType ?? 'auto')
+                  } else {
+                    setAiConnectorId(null)
+                    setRedisConnectorId(null)
+                    setDataset(h.dataset)
+                  }
+                  setResults(null)
+                  setQueryError(null)
+                }}
                 className="w-full text-left px-3 py-2 hover:bg-chef-card transition-colors border-b border-chef-border/20 group"
               >
                 <div className="flex items-center gap-1.5 mb-0.5">
@@ -531,11 +1030,11 @@ export default function QueryPage() {
       {/* ── Left sidebar ────────────────────────────────────────────────────── */}
       <div className="w-56 shrink-0 border-r border-chef-border flex flex-col bg-chef-surface">
 
-        {!isAiMode ? (
+        {!isAiMode && !isRedisMode ? (
           <>
-            {/* Dataset picker */}
+            {/* Source picker */}
             <div className="px-3 py-3 border-b border-chef-border relative">
-              <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted mb-1.5">Dataset</div>
+              <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted mb-1.5">Source</div>
               <button
                 onClick={() => setShowDataMenu(v => !v)}
                 className="w-full flex items-center gap-2 text-left px-2.5 py-1.5 rounded-md border border-chef-border bg-chef-bg hover:border-indigo-500/40 transition-colors"
@@ -553,7 +1052,7 @@ export default function QueryPage() {
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-mono truncate max-w-[120px]">{ds.name}</span>
-                        <span className="text-[10px] text-emerald-400 font-mono shrink-0">{ds.badge}</span>
+                        <span className={`text-[10px] font-mono shrink-0 ${ds.sourceType === 'connector' ? 'text-cyan-400' : 'text-emerald-400'}`}>{ds.badge}</span>
                       </div>
                       <div className="text-[10px] text-chef-muted mt-0.5 truncate">{ds.desc}</div>
                     </button>
@@ -589,18 +1088,52 @@ export default function QueryPage() {
               )}
             </div>
 
+            {isGenericConnectorMode && (
+              <div className="px-3 py-2.5 border-b border-chef-border">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <div
+                    onClick={() => setStoreLocally(v => !v)}
+                    className={`w-7 h-4 rounded-full relative transition-colors cursor-pointer ${storeLocally ? 'bg-cyan-600' : 'bg-chef-border'}`}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${storeLocally ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className="text-[10px] text-chef-muted">Materialize as dataset</span>
+                </label>
+                {storeLocally && (
+                  <input
+                    type="text"
+                    value={storeDatasetName}
+                    onChange={e => setStoreDatasetName(e.target.value)}
+                    placeholder="Dataset name…"
+                    className="mt-1.5 w-full px-2 py-1 bg-chef-bg border border-chef-border rounded text-[11px] font-mono text-chef-text placeholder-chef-border focus:outline-none focus:border-cyan-500/50"
+                  />
+                )}
+              </div>
+            )}
+
             {/* Saved queries + AI mode entry */}
             <div className="px-3 py-2 border-b border-chef-border flex items-center justify-between">
               <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted">Saved Queries</div>
-              {aiConnectors.length > 0 && (
-                <button
-                  onClick={() => handleSelectAiConnector(aiConnectors[0].id)}
-                  className="flex items-center gap-1 text-[9px] text-cyan-400 hover:text-cyan-300 transition-colors px-1.5 py-0.5 rounded border border-cyan-500/30 hover:border-cyan-500/60 bg-cyan-500/5"
-                  title="Switch to App Insights mode"
-                >
-                  <BarChart2 size={9} /> AI Mode
-                </button>
-              )}
+              <div className="flex items-center gap-1">
+                {redisConnectors.length > 0 && (
+                  <button
+                    onClick={() => handleSelectRedisConnector(redisConnectors[0].id)}
+                    className="flex items-center gap-1 text-[9px] text-red-400 hover:text-red-300 transition-colors px-1.5 py-0.5 rounded border border-red-500/30 hover:border-red-500/60 bg-red-500/5"
+                    title="Switch to Redis mode"
+                  >
+                    <Database size={9} /> Redis
+                  </button>
+                )}
+                {aiConnectors.length > 0 && (
+                  <button
+                    onClick={() => handleSelectAiConnector(aiConnectors[0].id)}
+                    className="flex items-center gap-1 text-[9px] text-cyan-400 hover:text-cyan-300 transition-colors px-1.5 py-0.5 rounded border border-cyan-500/30 hover:border-cyan-500/60 bg-cyan-500/5"
+                    title="Switch to observability mode"
+                  >
+                    <BarChart2 size={9} /> Observe
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex-1 overflow-auto py-1">
               {savedQueries.map(sq => (
@@ -615,14 +1148,118 @@ export default function QueryPage() {
 
             {historyPanel}
           </>
+        ) : isRedisMode ? (
+          <>
+            <div className="px-3 py-3 border-b border-chef-border relative">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Database size={10} className="text-red-400" />
+                  <div className="text-[9px] font-semibold uppercase tracking-widest text-red-400">Redis</div>
+                </div>
+                <button
+                  onClick={() => handleSelectRedisConnector(null)}
+                  className="text-[9px] text-chef-muted hover:text-chef-text transition-colors"
+                  title="Back to datasets"
+                >
+                  ← datasets
+                </button>
+              </div>
+              <button
+                onClick={() => setShowRedisConnMenu(v => !v)}
+                className="w-full flex items-center gap-2 text-left px-2.5 py-1.5 rounded-md border border-red-500/30 bg-chef-bg hover:border-red-500/60 transition-colors"
+              >
+                <Database size={11} className="text-red-400 shrink-0" />
+                <span className="text-[11px] font-mono text-chef-text flex-1 truncate">{redisConnectorName}</span>
+                {redisConnectors.length > 1 && <ChevronDown size={10} className="text-chef-muted shrink-0" />}
+              </button>
+              {showRedisConnMenu && redisConnectors.length > 1 && (
+                <div className="absolute left-3 right-3 top-full mt-1 bg-chef-card border border-chef-border rounded-lg shadow-xl z-30 py-1 animate-fade-in">
+                  {redisConnectors.map(c => (
+                    <button key={c.id} onClick={() => handleSelectRedisConnector(c.id)}
+                      className={`w-full text-left px-3 py-2 text-[11px] font-mono hover:bg-chef-card-hover transition-colors ${c.id === redisConnectorId ? 'text-red-400' : 'text-chef-text'}`}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="px-3 py-2.5 border-b border-chef-border">
+              <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted mb-2">Mode</div>
+              <div className="grid grid-cols-2 gap-1">
+                {(['command', 'search', 'json', 'timeseries', 'stream', 'catalog'] as RedisMode[]).map(mode => (
+                  <button key={mode} onClick={() => { setRedisMode(mode); setQuery(REDIS_MODE_TEMPLATES[mode]) }}
+                    className={`text-[10px] px-1.5 py-1 rounded border transition-colors font-mono ${
+                      redisMode === mode ? 'border-red-500/60 bg-red-500/10 text-red-400' : 'border-chef-border text-chef-muted hover:text-chef-text'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="px-3 py-2.5 border-b border-chef-border">
+              <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted mb-2">Value Type</div>
+              <select
+                value={redisValueType}
+                onChange={e => setRedisValueType(e.target.value as RedisValueType)}
+                className="w-full bg-chef-bg border border-chef-border rounded text-[11px] font-mono px-2 py-1 text-chef-text"
+              >
+                {['auto', 'string', 'hash', 'list', 'set', 'zset', 'json', 'timeseries', 'stream', 'search'].map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+              {redisCapabilities && (
+                <div className="mt-2 text-[10px] text-chef-muted leading-snug">
+                  {redisCapabilities.serverKind} · Redis {redisCapabilities.redisVersion || 'unknown'}
+                  {redisCapabilities.modules.length ? ` · ${redisCapabilities.modules.join(', ')}` : ''}
+                </div>
+              )}
+            </div>
+
+            <div className="px-3 py-2 border-b border-chef-border">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted">Catalog</div>
+                <select
+                  value={redisCatalogKind}
+                  onChange={e => setRedisCatalogKind(e.target.value as RedisCatalogKind)}
+                  className="bg-chef-bg border border-chef-border rounded text-[10px] font-mono px-1.5 py-0.5 text-chef-text"
+                >
+                  {['commands', 'capabilities', 'keyspaces', 'keys', 'indexes', 'streams'].map(kind => (
+                    <option key={kind} value={kind}>{kind}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="max-h-48 overflow-auto space-y-1">
+                {redisCatalog.length === 0
+                  ? <div className="text-[10px] text-chef-muted text-center py-3">No catalog data</div>
+                  : redisCatalog.map((row, index) => (
+                    <button key={`${index}-${Object.values(row).join('-')}`}
+                      onClick={() => {
+                        const first = Object.values(row)[0]
+                        if (first) setQuery(String(first))
+                      }}
+                      className="w-full text-left px-2 py-1.5 rounded border border-chef-border/40 hover:bg-chef-card transition-colors"
+                    >
+                      <div className="text-[10px] font-mono text-chef-text truncate">{Object.values(row)[0] ?? 'item'}</div>
+                      <div className="text-[9px] text-chef-muted truncate">{Object.values(row).slice(1).join(' · ')}</div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+
+            {historyPanel}
+          </>
         ) : (
           <>
-            {/* AI Mode: connector selector */}
+            {/* Observability mode: connector selector */}
             <div className="px-3 py-3 border-b border-chef-border relative">
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-1.5">
                   <BarChart2 size={10} className="text-cyan-400" />
-                  <div className="text-[9px] font-semibold uppercase tracking-widest text-cyan-400">App Insights</div>
+                  <div className="text-[9px] font-semibold uppercase tracking-widest text-cyan-400">Observability</div>
                 </div>
                 <button
                   onClick={() => handleSelectAiConnector(null)}
@@ -683,7 +1320,7 @@ export default function QueryPage() {
                 >
                   <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${storeLocally ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
                 </div>
-                <span className="text-[10px] text-chef-muted">Store results locally</span>
+                <span className="text-[10px] text-chef-muted">Materialize as dataset</span>
               </label>
               {storeLocally && (
                 <input
@@ -757,9 +1394,17 @@ export default function QueryPage() {
         {isAiMode ? (
           <div className="flex items-center gap-2 px-4 py-1.5 border-b border-chef-border bg-cyan-900/10 text-[10px] font-mono shrink-0">
             <BarChart2 size={10} className="text-cyan-400" />
-            <span className="text-cyan-400">App Insights · direct query</span>
+            <span className="text-cyan-400">Observability · direct query</span>
             <span className="text-chef-muted">·</span>
             <span className="text-chef-muted truncate">{aiConnectorName}</span>
+            <span className="text-chef-muted ml-auto shrink-0">⌘↵ to run</span>
+          </div>
+        ) : isRedisMode ? (
+          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-chef-border bg-red-900/10 text-[10px] font-mono shrink-0">
+            <Database size={10} className="text-red-400" />
+            <span className="text-red-400">Redis · capability-aware query</span>
+            <span className="text-chef-muted">·</span>
+            <span className="text-chef-muted truncate">{redisConnectorName}</span>
             <span className="text-chef-muted ml-auto shrink-0">⌘↵ to run</span>
           </div>
         ) : (
@@ -780,6 +1425,10 @@ export default function QueryPage() {
               <div className="flex items-center gap-1.5 text-xs font-mono font-semibold px-2.5 py-1 rounded-md border border-amber-500/30 bg-chef-bg text-amber-400">
                 KQL <span className="text-[9px] text-chef-border normal-case font-normal">locked</span>
               </div>
+            ) : isRedisMode ? (
+              <div className="flex items-center gap-1.5 text-xs font-mono font-semibold px-2.5 py-1 rounded-md border border-red-500/30 bg-chef-bg text-red-400">
+                REDIS <span className="text-[9px] text-chef-border normal-case font-normal">locked</span>
+              </div>
             ) : (
               <button
                 onClick={() => { setShowLangMenu(v => !v); setShowDataMenu(false) }}
@@ -788,7 +1437,7 @@ export default function QueryPage() {
                 {langMeta[lang].label} <ChevronDown size={11} />
               </button>
             )}
-            {showLangMenu && !isAiMode && (
+            {showLangMenu && !isAiMode && !isRedisMode && (
               <div className="absolute top-full left-0 mt-1 w-32 bg-chef-card border border-chef-border rounded-lg shadow-xl shadow-black/40 z-20 py-1 animate-fade-in">
                 {(Object.entries(langMeta) as [Lang, typeof langMeta.sql][]).map(([key, meta]) => (
                   <button key={key} onClick={() => handleLangChange(key)}
@@ -810,6 +1459,12 @@ export default function QueryPage() {
               <span className="font-mono truncate max-w-[120px]">{aiConnectorName}</span>
               <span className="text-[9px] text-chef-muted font-mono shrink-0">{aiTimespanLabel}</span>
             </div>
+          ) : isRedisMode ? (
+            <div className="flex items-center gap-1.5 text-[11px] text-red-400 border border-red-500/30 rounded-md px-2.5 py-1 bg-chef-bg">
+              <Database size={11} />
+              <span className="font-mono truncate max-w-[120px]">{redisConnectorName}</span>
+              <span className="text-[9px] text-chef-muted font-mono shrink-0">{redisMode}</span>
+            </div>
           ) : (
             <div className="flex items-center gap-1.5 text-[11px] text-chef-muted border border-chef-border rounded-md px-2.5 py-1 bg-chef-bg">
               <Server size={11} />
@@ -825,7 +1480,7 @@ export default function QueryPage() {
             <Copy size={13} />
           </button>
 
-          <button onClick={handleRun} disabled={running}
+          <button onClick={() => void handleRun()} disabled={running}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
           >
             {running ? <><Loader2 size={12} className="animate-spin" /> Running…</> : <><Play size={12} fill="currentColor" /> Run</>}
@@ -911,7 +1566,7 @@ export default function QueryPage() {
             <div className="bg-amber-900/10 border-t border-amber-500/20 px-4 py-2 flex items-start gap-2 text-[11px] shrink-0">
               <ArrowRight size={11} className="text-amber-400 mt-0.5 shrink-0" />
               <div>
-                <span className="text-amber-400 font-semibold">KQL → SQL: </span>
+                <span className="text-amber-400 font-semibold">{isAiMode ? 'Translated Query: ' : isRedisMode ? 'Redis Result: ' : 'KQL → SQL: '}</span>
                 <code className="font-mono text-amber-300">{results.kqlTranslated}</code>
               </div>
             </div>
@@ -937,19 +1592,32 @@ export default function QueryPage() {
                 {results && (
                   <div className="flex items-center gap-3 text-[10px] font-mono text-chef-muted">
                     <span className="flex items-center gap-1 text-emerald-400"><Zap size={10} /> {results.durationMs}ms</span>
-                    {!isAiMode && <span>{fmtBytes(results.bytesScanned)} scanned</span>}
-                    {!isAiMode && <span>{fmtNum(results.totalRows)} rows total</span>}
-                    {isAiMode && <span className="flex items-center gap-1 text-cyan-400"><BarChart2 size={10} /> App Insights</span>}
+                    {!isAiMode && !isRedisMode && <span>{fmtBytes(results.bytesScanned)} scanned</span>}
+                    <span>{fmtNum(results.totalRows)} rows total</span>
+                    {isAiMode && <span className="flex items-center gap-1 text-cyan-400"><BarChart2 size={10} /> Observability</span>}
+                    {isRedisMode && <span className="flex items-center gap-1 text-red-400"><Database size={10} /> Redis</span>}
                   </div>
                 )}
                 <div className="flex-1" />
                 {results && results.rows.length > 0 && (
                   <button
+                    onClick={() => void copyRowsToClipboard('selected')}
+                    className="flex items-center gap-1 text-[11px] text-chef-muted hover:text-chef-text transition-colors"
+                    title={hasSelection ? 'Copy selected rows' : 'Copy all visible rows'}
+                  >
+                    {copyFeedback === 'selected' || (copyFeedback === 'all' && !hasSelection)
+                      ? <CheckCircle2 size={11} className="text-emerald-400" />
+                      : <Copy size={11} />}
+                    {hasSelection ? `Copy selected (${selectedRows.length})` : 'Copy all visible'}
+                  </button>
+                )}
+                {results && results.rows.length > 0 && (
+                  <button
                     onClick={() => {
-                      const csv = [results.columns.join(','), ...results.rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n')
+                      const csv = rowsToDelimited(results.columns, results.rows, ',')
                       const a = document.createElement('a')
                       a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-                      a.download = `results_${isAiMode ? 'appinsights' : dataset}_${Date.now()}.csv`
+                      a.download = `results_${isAiMode ? 'observability' : isRedisMode ? 'redis' : dataset}_${Date.now()}.csv`
                       a.click()
                     }}
                     className="flex items-center gap-1 text-[11px] text-chef-muted hover:text-chef-text transition-colors"
@@ -965,7 +1633,7 @@ export default function QueryPage() {
               {running ? (
                 <div className="flex-1 flex items-center justify-center gap-3 text-chef-muted">
                   <Loader2 size={16} className="animate-spin text-indigo-400" />
-                  <span className="text-sm font-mono">{isAiMode ? 'Querying App Insights…' : 'Executing on server…'}</span>
+                  <span className="text-sm font-mono">{isAiMode ? 'Querying observability source…' : isRedisMode ? 'Querying Redis…' : 'Executing on server…'}</span>
                 </div>
               ) : queryError ? (
                 <div className="flex-1 flex items-start gap-2 p-4 text-rose-400">
@@ -982,16 +1650,58 @@ export default function QueryPage() {
                   <table className="w-full">
                     <thead className="sticky top-0 bg-chef-surface z-10">
                       <tr className="border-b border-chef-border">
+                        <th className="px-4 py-2 w-12">
+                          <input
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            ref={node => {
+                              if (node) node.indeterminate = someVisibleSelected
+                            }}
+                            onChange={handleToggleAllRows}
+                            className="h-3.5 w-3.5 rounded border-chef-border bg-chef-bg text-indigo-500 focus:ring-indigo-500/40"
+                            aria-label="Select all visible rows"
+                          />
+                        </th>
                         {results.columns.map(col => (
                           <th key={col} className="text-left px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-chef-muted font-mono whitespace-nowrap">
-                            {col}
+                            {canRewriteSort ? (
+                              <button
+                                onClick={() => void handleHeaderSort(col)}
+                                className={`flex items-center gap-1 transition-colors ${
+                                  sortState?.column === col ? 'text-chef-text' : 'text-chef-muted hover:text-chef-text'
+                                }`}
+                                title={`Sort by ${col}`}
+                              >
+                                <span>{col}</span>
+                                <span className={`text-[9px] ${sortState?.column === col ? 'text-indigo-300' : 'text-chef-border'}`}>
+                                  {sortState?.column === col ? (sortState.direction === 'asc' ? '↑' : '↓') : '↕'}
+                                </span>
+                              </button>
+                            ) : (
+                              col
+                            )}
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {results.rows.map((row, i) => (
-                        <tr key={i} className="border-b border-chef-border/50 hover:bg-chef-card/50 transition-colors">
+                        <tr
+                          key={i}
+                          className={`border-b border-chef-border/50 transition-colors ${
+                            selectedRows.includes(i) ? 'bg-indigo-500/10' : 'hover:bg-chef-card/50'
+                          }`}
+                        >
+                          <td className="px-4 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedRows.includes(i)}
+                              onClick={event => handleToggleRow(i, event)}
+                              readOnly
+                              className="h-3.5 w-3.5 rounded border-chef-border bg-chef-bg text-indigo-500 focus:ring-indigo-500/40"
+                              aria-label={`Select row ${i + 1}`}
+                            />
+                          </td>
                           {row.map((cell, j) => (
                             <td key={j} className={`px-4 py-2 text-[12px] font-mono whitespace-nowrap ${
                               cell === '∅'        ? 'text-chef-muted italic' :
@@ -1005,8 +1715,8 @@ export default function QueryPage() {
                               cell === 'desktop'  ? 'text-indigo-400' :
                               j === 0 && !isNaN(Number(cell)) ? 'text-orange-300' :
                               'text-chef-text'
-                            }`}>
-                              {cell}
+                            }`} title={renderCellValue(cell)}>
+                              {renderCellValue(cell)}
                             </td>
                           ))}
                         </tr>
@@ -1033,9 +1743,10 @@ export default function QueryPage() {
             </>
           ) : (
             <>
-              <span className={`flex items-center gap-1 font-semibold ${langMeta[lang].color}`}>
-                <Code2 size={10} /> {langMeta[lang].label}
+              <span className={`flex items-center gap-1 font-semibold ${isRedisMode ? 'text-red-400' : langMeta[lang].color}`}>
+                <Code2 size={10} /> {isRedisMode ? 'REDIS' : langMeta[lang].label}
               </span>
+              {isRedisMode && <span className="text-chef-muted">{redisMode}</span>}
               <span className="text-chef-muted">{lineCount} lines</span>
             </>
           )}
@@ -1043,13 +1754,13 @@ export default function QueryPage() {
           {results && (
             <>
               <span className="flex items-center gap-1 text-emerald-400"><Zap size={10} /> {results.durationMs}ms</span>
-              {!isAiMode && <span className="text-chef-muted">{fmtBytes(results.bytesScanned)} scanned</span>}
+              {!isAiMode && !isRedisMode && <span className="text-chef-muted">{fmtBytes(results.bytesScanned)} scanned</span>}
               <span className="text-chef-muted">{fmtNum(results.rowCount)} rows returned</span>
             </>
           )}
           {!results && !running && (
             <span className="text-chef-muted">
-              {isAiMode ? `Ready · ${aiConnectorName}` : 'Ready · server-side'}
+              {isAiMode ? `Ready · ${aiConnectorName}` : isRedisMode ? `Ready · ${redisConnectorName}` : 'Ready · server-side'}
             </span>
           )}
           {running && <span className="text-indigo-400 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Executing…</span>}

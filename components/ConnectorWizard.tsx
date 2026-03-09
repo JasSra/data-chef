@@ -5,29 +5,38 @@ import {
   X, Globe, Database, Cloud, Server, Webhook as WebhookIcon,
   ArrowLeft, ChevronRight, CheckCircle2, Loader2, AlertCircle,
   Clock, Copy, Eye, EyeOff, Terminal, Zap, Key, HardDrive,
-  AlertTriangle, Shield, Upload, FileText, BarChart2,
+  AlertTriangle, Shield, Upload, FileText, BarChart2, Users,
 } from 'lucide-react'
+import BrandIcon from '@/components/BrandIcon'
 
 /* ── Connector catalog ───────────────────────────────────────────── */
-export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights'
+export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github'
 
 interface ConnectorDef {
-  id: ConnectorId; label: string; desc: string; Icon: React.ElementType
+  id: ConnectorId; label: string; desc: string; Icon?: React.ElementType
+  brandClass?: string
   color: string; bg: string; border: string
-  category: 'API' | 'Database' | 'Storage' | 'Warehouse' | 'Monitoring'
+  category: 'API' | 'Database' | 'Storage' | 'Warehouse' | 'Monitoring' | 'Identity' | 'Developer Tools'
   badge?: string; noTest?: boolean
 }
 const CONNECTORS: ConnectorDef[] = [
   { id: 'http',       label: 'HTTP API',        desc: 'REST, GraphQL, JSON over HTTP(S)',      Icon: Globe,         color: 'text-sky-400',     bg: 'bg-sky-500/10',     border: 'border-sky-500/30',     category: 'API' },
+  { id: 'github',     label: 'GitHub',          desc: 'Repos, pull requests, and issues',      brandClass: 'fa-brands fa-github', color: 'text-zinc-200', bg: 'bg-zinc-500/10', border: 'border-zinc-500/30', category: 'Developer Tools', badge: 'Code' },
   { id: 'webhook',    label: 'Inbound Webhook',  desc: 'Receive push events in real-time',      Icon: WebhookIcon,   color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/30',   category: 'API',       badge: 'Push', noTest: true },
   { id: 'postgresql', label: 'PostgreSQL',       desc: 'Tables, views, incremental / CDC',      Icon: Database,      color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/30',    category: 'Database' },
   { id: 'mysql',      label: 'MySQL / MariaDB',  desc: 'Tables or custom SQL queries',          Icon: Database,      color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/30',  category: 'Database' },
   { id: 'mongodb',    label: 'MongoDB',          desc: 'Collections, pipelines & aggregations', Icon: Database,      color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', category: 'Database', badge: 'NoSQL' },
+  { id: 'redis',      label: 'Redis',            desc: 'Keys, hashes, streams, RediSearch, RedisJSON', Icon: Database, color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30', category: 'Database', badge: 'Cache' },
   { id: 's3',         label: 'S3 / R2 / GCS',   desc: 'Object storage, JSON/CSV/Parquet',      Icon: Cloud,         color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/30',  category: 'Storage' },
   { id: 'sftp',       label: 'SFTP / FTP',       desc: 'Secure file transfer, remote exports',  Icon: Server,        color: 'text-slate-400',   bg: 'bg-slate-500/10',   border: 'border-slate-500/30',   category: 'Storage' },
-  { id: 'bigquery',   label: 'BigQuery',         desc: 'Google BigQuery tables and SQL',        Icon: HardDrive,     color: 'text-rose-400',    bg: 'bg-rose-500/10',    border: 'border-rose-500/30',    category: 'Warehouse', badge: 'GCP' },
+  { id: 'bigquery',   label: 'BigQuery',         desc: 'Google BigQuery tables and SQL',        brandClass: 'fa-brands fa-google', color: 'text-rose-400',    bg: 'bg-rose-500/10',    border: 'border-rose-500/30',    category: 'Warehouse', badge: 'GCP' },
   { id: 'file',        label: 'File Upload',      desc: 'CSV, JSON, JSONL — upload directly',            Icon: FileText,   color: 'text-lime-400',    bg: 'bg-lime-500/10',    border: 'border-lime-500/30',    category: 'Storage',    badge: 'Local',  noTest: true },
-  { id: 'appinsights', label: 'App Insights',    desc: 'Azure Application Insights — live KQL queries', Icon: BarChart2,  color: 'text-cyan-400',    bg: 'bg-cyan-500/10',    border: 'border-cyan-500/30',    category: 'Monitoring', badge: 'Azure' },
+  { id: 'appinsights', label: 'App Insights (API key)', desc: 'Application ID + API key for App Insights Analytics queries', brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', category: 'Monitoring', badge: 'Azure' },
+  { id: 'azuremonitor', label: 'Azure Monitor (OAuth)', desc: 'Workspace queries via Entra client credentials', brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-300', bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', category: 'Monitoring', badge: 'Azure' },
+  { id: 'elasticsearch', label: 'Elasticsearch / OpenSearch', desc: 'Logs and events via KQL-compatible queries', Icon: Database, color: 'text-amber-300', bg: 'bg-amber-500/10', border: 'border-amber-500/30', category: 'Monitoring', badge: 'Logs' },
+  { id: 'datadog', label: 'Datadog', desc: 'Logs and events with KQL-first observability queries', Icon: BarChart2, color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'Monitoring', badge: 'SaaS' },
+  { id: 'azureb2c',    label: 'Azure AD B2C',    desc: 'Microsoft Graph users, user flows, and policies', brandClass: 'fa-brands fa-microsoft', color: 'text-teal-400',    bg: 'bg-teal-500/10',    border: 'border-teal-500/30',    category: 'Identity',   badge: 'Azure' },
+  { id: 'azureentraid',label: 'Azure Entra ID',  desc: 'Microsoft Graph users, groups, and applications', brandClass: 'fa-brands fa-microsoft', color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/30', category: 'Identity', badge: 'Azure' },
 ]
 
 /* ── Exported job / connector types ──────────────────────────────── */
@@ -42,8 +51,61 @@ export interface ConnectorJob {
 export interface NewConnector {
   id: string; name: string; type: ConnectorId; endpoint: string
   authMethod: string; syncInterval: string; description: string
-  aiCredentials?: { mode: 'appinsights' | 'workspace'; appId: string; workspaceId: string; tenantId: string; clientId: string; clientSecret: string }
+  sourceDiscoveryId?: string
+  existingConnectorId?: string
+  aiCredentials?: {
+    authMode: 'api_key' | 'entra_client_secret'
+    appId: string
+    apiKey: string
+    connectionString?: string
+    mode?: 'appinsights' | 'workspace'
+    workspaceId?: string
+    tenantId?: string
+    clientId?: string
+    clientSecret?: string
+  }
+  observabilityCredentials?: Record<string, unknown>
+  azureB2cCredentials?: {
+    tenantId: string
+    clientId: string
+    authMode: 'client_secret' | 'client_certificate'
+    clientSecret: string
+    certificatePem: string
+    privateKeyPem: string
+    thumbprint: string
+    cloud: 'global'
+  }
+  azureEntraIdCredentials?: {
+    tenantId: string
+    clientId: string
+    authMode: 'client_secret' | 'client_certificate'
+    clientSecret: string
+    certificatePem: string
+    privateKeyPem: string
+    thumbprint: string
+    cloud: 'global'
+  }
+  githubCredentials?: {
+    mode: 'pat'
+    token: string
+    username?: string
+  }
+  githubAuthTransactionId?: string
   runtimeConfig?: Record<string, unknown>
+}
+
+export interface DiscoveryConnectorDraft {
+  candidateId?: string
+  existingConnectorId?: string
+  type: ConnectorId
+  name: string
+  description: string
+  endpoint: string
+  runtimeConfig: Record<string, unknown>
+  aiCredentials?: NewConnector['aiCredentials']
+  observabilityCredentials?: NewConnector['observabilityCredentials']
+  azureB2cCredentials?: NewConnector['azureB2cCredentials']
+  azureEntraIdCredentials?: NewConnector['azureEntraIdCredentials']
 }
 
 /* ── Form state types ────────────────────────────────────────────── */
@@ -85,6 +147,20 @@ interface BigQueryForm {
   name: string; description: string; project: string; dataset: string
   tableOrSql: string; serviceAccountJson: string; schedule: string
 }
+interface RedisForm {
+  name: string; description: string
+  connectionMode: 'fields' | 'connectionString'
+  connectionString: string
+  host: string; port: string
+  username: string; password: string
+  database: string
+  tls: boolean
+  defaultQueryMode: 'command' | 'search' | 'json' | 'timeseries' | 'stream' | 'catalog'
+  defaultValueType: 'auto' | 'string' | 'hash' | 'list' | 'set' | 'zset' | 'json' | 'timeseries' | 'stream' | 'search'
+  defaultKeyPattern: string
+  defaultSearchIndex: string
+  schedule: string
+}
 interface FileForm {
   name: string; description: string
   file: File | null; fileName: string; fileSize: number
@@ -93,11 +169,93 @@ interface FileForm {
 }
 interface AppInsightsForm {
   name: string; description: string
+  authMode: 'api_key' | 'entra_client_secret'
   mode: 'appinsights' | 'workspace'
-  appId: string; workspaceId: string
+  connectionString: string
+  appId: string; apiKey: string; workspaceId: string
   tenantId: string; clientId: string; clientSecret: string
 }
-type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | FileForm | AppInsightsForm
+interface AzureMonitorForm {
+  name: string; description: string
+  workspaceId: string
+  tenantId: string; clientId: string; clientSecret: string
+  defaultQuery: string
+}
+interface ElasticObservabilityForm {
+  name: string; description: string
+  endpoint: string
+  authType: 'basic' | 'apikey'
+  username: string; password: string; apiKey: string
+  indexPattern: string
+  defaultQuery: string
+  schedule: string
+}
+interface DatadogForm {
+  name: string; description: string
+  site: string
+  apiKey: string; applicationKey: string
+  source: 'logs' | 'events'
+  defaultQuery: string
+  schedule: string
+}
+interface AzureB2CForm {
+  name: string; description: string
+  tenantId: string; clientId: string
+  authMode: 'client_secret' | 'client_certificate'
+  clientSecret: string
+  certificatePem: string
+  privateKeyPem: string
+  thumbprint: string
+  resource: 'users' | 'userFlows' | 'customPolicies'
+  schedule: string
+}
+interface AzureEntraIdForm {
+  name: string; description: string
+  tenantId: string; clientId: string
+  authMode: 'client_secret' | 'client_certificate'
+  clientSecret: string
+  certificatePem: string
+  privateKeyPem: string
+  thumbprint: string
+  resource: 'users' | 'groups' | 'applications'
+  schedule: string
+}
+interface GitHubRepoOption {
+  id: number
+  owner: string
+  repo: string
+  fullName: string
+  private: boolean
+  ownerType: 'User' | 'Organization'
+  defaultBranch: string
+  visibility: string
+  archived: boolean
+  url: string
+}
+interface GitHubForm {
+  name: string
+  description: string
+  authMode: 'pat' | 'oauth' | 'app'
+  token: string
+  oauthClientId: string
+  oauthClientSecret: string
+  appSlug: string
+  appId: string
+  appClientId: string
+  appClientSecret: string
+  appPrivateKey: string
+  transactionId: string
+  accountLogin: string
+  repoSearch: string
+  reposLoaded: boolean
+  selectedRepos: GitHubRepoOption[]
+  availableRepos: GitHubRepoOption[]
+  defaultResource: 'repos' | 'pullRequests' | 'issues'
+  pullRequestState: 'open' | 'closed' | 'all'
+  issueState: 'open' | 'closed' | 'all'
+  schedule: string
+}
+type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | RedisForm | FileForm | AppInsightsForm | AzureMonitorForm | ElasticObservabilityForm | DatadogForm | AzureB2CForm | AzureEntraIdForm | GitHubForm
 
 /* ── Validation ──────────────────────────────────────────────────── */
 type FieldErrors = Record<string, string | undefined>
@@ -174,6 +332,19 @@ function validateBigQuery(f: BigQueryForm): FieldErrors {
   else { try { JSON.parse(f.serviceAccountJson) } catch { e.serviceAccountJson = 'Must be valid JSON' } }
   return e
 }
+function validateRedis(f: RedisForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (f.connectionMode === 'connectionString') {
+    if (!f.connectionString.trim()) e.connectionString = 'Connection string required'
+    else if (!/^rediss?:\/\//.test(f.connectionString.trim())) e.connectionString = 'Must start with redis:// or rediss://'
+  } else {
+    if (!f.host.trim()) e.host = 'Host is required'
+    if (!f.port || isNaN(Number(f.port))) e.port = 'Valid port required'
+  }
+  if (f.defaultQueryMode === 'search' && !f.defaultSearchIndex.trim()) e.defaultSearchIndex = 'Search index is required for search mode'
+  return e
+}
 function validateFile(f: FileForm): FieldErrors {
   const e: FieldErrors = {}
   if (!f.name.trim()) e.name = 'Name is required'
@@ -184,13 +355,114 @@ function validateFile(f: FileForm): FieldErrors {
 }
 function validateAppInsights(f: AppInsightsForm): FieldErrors {
   const e: FieldErrors = {}
+  const derived = parseAppInsightsConnectionString(f.connectionString)
   if (!f.name.trim())         e.name         = 'Name is required'
-  if (f.mode === 'workspace' && !f.workspaceId.trim()) e.workspaceId = 'Workspace ID is required'
-  if (f.mode === 'appinsights' && !f.appId.trim())     e.appId       = 'Application ID is required'
-  if (!f.tenantId.trim())     e.tenantId     = 'Tenant ID is required'
-  if (!f.clientId.trim())     e.clientId     = 'Client ID is required'
-  if (!f.clientSecret.trim()) e.clientSecret = 'Client Secret is required'
+  if (!f.appId.trim() && !derived.applicationId) e.appId = 'Application ID or connection string with ApplicationId is required'
+  if (f.authMode === 'api_key') {
+    if (!f.apiKey.trim()) e.apiKey = 'API key is required'
+  } else {
+    if (f.mode === 'workspace' && !f.workspaceId.trim()) e.workspaceId = 'Workspace ID is required'
+    if (!f.tenantId.trim())     e.tenantId     = 'Tenant ID is required'
+    if (!f.clientId.trim())     e.clientId     = 'Client ID is required'
+    if (!f.clientSecret.trim()) e.clientSecret = 'Client Secret is required'
+  }
   return e
+}
+function validateAzureMonitor(f: AzureMonitorForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!f.workspaceId.trim()) e.workspaceId = 'Workspace ID is required'
+  if (!f.tenantId.trim()) e.tenantId = 'Tenant ID is required'
+  if (!f.clientId.trim()) e.clientId = 'Client ID is required'
+  if (!f.clientSecret.trim()) e.clientSecret = 'Client secret is required'
+  return e
+}
+function validateElastic(f: ElasticObservabilityForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!validUrl(f.endpoint)) e.endpoint = 'Valid endpoint URL required'
+  if (!f.indexPattern.trim()) e.indexPattern = 'Index pattern is required'
+  if (f.authType === 'basic') {
+    if (!f.username.trim()) e.username = 'Username is required'
+    if (!f.password.trim()) e.password = 'Password is required'
+  }
+  if (f.authType === 'apikey' && !f.apiKey.trim()) e.apiKey = 'API key is required'
+  return e
+}
+function validateDatadog(f: DatadogForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!f.site.trim()) e.site = 'Site is required'
+  if (!f.apiKey.trim()) e.apiKey = 'API key is required'
+  if (!f.applicationKey.trim()) e.applicationKey = 'Application key is required'
+  return e
+}
+function validateAzureB2C(f: AzureB2CForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!f.tenantId.trim()) e.tenantId = 'Tenant ID is required'
+  if (!f.clientId.trim()) e.clientId = 'Client ID is required'
+  if (f.authMode === 'client_secret' && !f.clientSecret.trim()) e.clientSecret = 'Client secret is required'
+  if (f.authMode === 'client_certificate') {
+    if (!f.certificatePem.trim()) e.certificatePem = 'Certificate PEM is required'
+    if (!f.privateKeyPem.trim()) e.privateKeyPem = 'Private key PEM is required'
+  }
+  return e
+}
+function validateAzureEntraId(f: AzureEntraIdForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!f.tenantId.trim()) e.tenantId = 'Tenant ID is required'
+  if (!f.clientId.trim()) e.clientId = 'Client ID is required'
+  if (f.authMode === 'client_secret' && !f.clientSecret.trim()) e.clientSecret = 'Client secret is required'
+  if (f.authMode === 'client_certificate') {
+    if (!f.certificatePem.trim()) e.certificatePem = 'Certificate PEM is required'
+    if (!f.privateKeyPem.trim()) e.privateKeyPem = 'Private key PEM is required'
+  }
+  return e
+}
+function validateGitHub(f: GitHubForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (f.authMode === 'pat' && !f.token.trim()) e.token = 'Personal access token is required'
+  if (f.authMode === 'oauth') {
+    if (!f.oauthClientId.trim()) e.oauthClientId = 'OAuth client ID is required'
+    if (!f.oauthClientSecret.trim()) e.oauthClientSecret = 'OAuth client secret is required'
+  }
+  if (f.authMode === 'app') {
+    if (!f.appSlug.trim()) e.appSlug = 'GitHub App slug is required'
+    if (!f.appId.trim()) e.appId = 'GitHub App ID is required'
+    if (!f.appClientId.trim()) e.appClientId = 'GitHub App client ID is required'
+    if (!f.appClientSecret.trim()) e.appClientSecret = 'GitHub App client secret is required'
+    if (!f.appPrivateKey.trim()) e.appPrivateKey = 'GitHub App private key is required'
+  }
+  if (f.authMode !== 'pat' && !f.transactionId.trim()) e.transactionId = 'GitHub authorization is required'
+  if (f.selectedRepos.length === 0) e.selectedRepos = 'Select at least one repository'
+  return e
+}
+
+function parseAppInsightsConnectionString(connectionString: string): {
+  applicationId: string
+  instrumentationKey: string
+  ingestionEndpoint: string
+} {
+  const parts = connectionString
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+
+  const map = new Map<string, string>()
+  for (const part of parts) {
+    const idx = part.indexOf('=')
+    if (idx <= 0) continue
+    map.set(part.slice(0, idx).trim().toLowerCase(), part.slice(idx + 1).trim())
+  }
+
+  return {
+    applicationId: map.get('applicationid') ?? '',
+    instrumentationKey: map.get('instrumentationkey') ?? '',
+    ingestionEndpoint: map.get('ingestionendpoint') ?? '',
+  }
 }
 
 /* ── Test log sequences ──────────────────────────────────────────── */
@@ -284,6 +556,30 @@ function getTestLogs(type: ConnectorId, form: Record<string, unknown>): LogEntry
         { level: 'success', msg: `Connection verified · ${isWs ? 'Azure Monitor Workspace' : 'App Insights'} KQL engine ready`, delay: 400 },
       ]
     }
+    case 'azuremonitor': {
+      const workspace = String(form.workspaceId || 'xxxxxxxx').slice(0, 8)
+      return [
+        { level: 'info',    msg: 'Resolving login.microsoftonline.com', delay: 400 },
+        { level: 'info',    msg: `Requesting OAuth2 token for workspace ${workspace}…`, delay: 650 },
+        { level: 'success', msg: 'Azure AD token acquired · client_credentials flow', delay: 450 },
+        { level: 'info',    msg: 'KQL: requests | take 1 via Log Analytics', delay: 500 },
+        { level: 'success', msg: 'Workspace query endpoint verified', delay: 400 },
+      ]
+    }
+    case 'elasticsearch':
+      return [
+        { level: 'info', msg: `Connecting to ${String(form.endpoint || 'https://elastic.example.com')}`, delay: 420 },
+        { level: 'info', msg: `Probing index pattern ${String(form.indexPattern || 'logs-*')}`, delay: 580 },
+        { level: 'info', msg: 'POST /_search size:1', delay: 480 },
+        { level: 'success', msg: 'Cluster responded · KQL compatibility mode ready', delay: 420 },
+      ]
+    case 'datadog':
+      return [
+        { level: 'info', msg: `Connecting to api.${String(form.site || 'datadoghq.com')}`, delay: 420 },
+        { level: 'info', msg: `Preparing ${String(form.source || 'logs')} search probe`, delay: 540 },
+        { level: 'info', msg: 'POST /api/v2/logs/events/search', delay: 480 },
+        { level: 'success', msg: 'Datadog API responded · observability query runtime ready', delay: 420 },
+      ]
     default:
       return []
   }
@@ -324,8 +620,40 @@ const INIT_SFTP: SftpForm = {
 const INIT_BQ: BigQueryForm = {
   name: '', description: '', project: '', dataset: '', tableOrSql: '', serviceAccountJson: '', schedule: '1h',
 }
+const INIT_REDIS: RedisForm = {
+  name: '', description: '', connectionMode: 'fields', connectionString: '',
+  host: '', port: '6379', username: '', password: '', database: '0', tls: false,
+  defaultQueryMode: 'command', defaultValueType: 'auto', defaultKeyPattern: '*', defaultSearchIndex: '', schedule: 'on-demand',
+}
 const INIT_AI: AppInsightsForm = {
-  name: '', description: '', mode: 'workspace', appId: '', workspaceId: '', tenantId: '', clientId: '', clientSecret: '',
+  name: '', description: '', authMode: 'api_key', mode: 'workspace', connectionString: '', appId: '', apiKey: '', workspaceId: '', tenantId: '', clientId: '', clientSecret: '',
+}
+const INIT_AZURE_MONITOR: AzureMonitorForm = {
+  name: '', description: '', workspaceId: '', tenantId: '', clientId: '', clientSecret: '',
+  defaultQuery: 'requests\n| where timestamp > ago(24h)\n| summarize count() by bin(timestamp, 1h)\n| order by timestamp asc',
+}
+const INIT_ELASTIC: ElasticObservabilityForm = {
+  name: '', description: '', endpoint: '', authType: 'basic', username: '', password: '', apiKey: '',
+  indexPattern: 'logs-*',
+  defaultQuery: 'logs\n| where @timestamp > ago(24h)\n| limit 100',
+  schedule: 'on-demand',
+}
+const INIT_DATADOG: DatadogForm = {
+  name: '', description: '', site: 'datadoghq.com', apiKey: '', applicationKey: '', source: 'logs',
+  defaultQuery: 'logs\n| where status:error\n| limit 100',
+  schedule: 'on-demand',
+}
+const INIT_AZURE_B2C: AzureB2CForm = {
+  name: '', description: '', tenantId: '', clientId: '', authMode: 'client_secret', clientSecret: '',
+  certificatePem: '', privateKeyPem: '', thumbprint: '', resource: 'users', schedule: 'on-demand',
+}
+const INIT_AZURE_ENTRA_ID: AzureEntraIdForm = {
+  name: '', description: '', tenantId: '', clientId: '', authMode: 'client_secret', clientSecret: '',
+  certificatePem: '', privateKeyPem: '', thumbprint: '', resource: 'users', schedule: 'on-demand',
+}
+const INIT_GITHUB: GitHubForm = {
+  name: '', description: '', authMode: 'pat', token: '', oauthClientId: '', oauthClientSecret: '', appSlug: '', appId: '', appClientId: '', appClientSecret: '', appPrivateKey: '', transactionId: '', accountLogin: '', repoSearch: '',
+  reposLoaded: false, selectedRepos: [], availableRepos: [], defaultResource: 'repos', pullRequestState: 'open', issueState: 'open', schedule: '1h',
 }
 
 /* ── Shared form widgets ─────────────────────────────────────────── */
@@ -404,6 +732,7 @@ function Divider({ label }: { label: string }) {
 function ScheduleSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <FSelect value={value} onChange={onChange}>
+      <option value="on-demand">On demand</option>
       <option value="manual">Manual only</option>
       <option value="5min">Every 5 minutes</option>
       <option value="15min">Every 15 minutes</option>
@@ -427,8 +756,8 @@ function AuthTabs({ value, onChange, types }: { value: string; onChange: (v: str
 }
 
 /* ── Step 0: Type Selection ──────────────────────────────────────── */
-type Category = 'All' | 'API' | 'Database' | 'Storage' | 'Warehouse'
-const CATS: Category[] = ['All', 'API', 'Database', 'Storage', 'Warehouse']
+type Category = 'All' | 'API' | 'Database' | 'Storage' | 'Warehouse' | 'Monitoring' | 'Identity' | 'Developer Tools'
+const CATS: Category[] = ['All', 'API', 'Developer Tools', 'Database', 'Storage', 'Warehouse', 'Monitoring', 'Identity']
 
 function TypeStep({ selected, onSelect }: { selected: ConnectorId | null; onSelect: (id: ConnectorId) => void }) {
   const [cat, setCat] = useState<Category>('All')
@@ -445,11 +774,11 @@ function TypeStep({ selected, onSelect }: { selected: ConnectorId | null; onSele
         ))}
       </div>
       <div className="grid grid-cols-2 gap-2.5">
-        {shown.map(({ id, label, desc, Icon, color, bg, border, badge }) => (
+        {shown.map(({ id, label, desc, Icon, brandClass, color, bg, border, badge }) => (
           <button key={id} onClick={() => onSelect(id)}
             className={`group relative flex items-center gap-3 p-3.5 rounded-xl border text-left transition-all ${selected === id ? `${border} ${bg} ring-1 ring-indigo-500/30` : 'border-chef-border bg-chef-card hover:border-indigo-500/30'}`}>
             <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${bg} border ${border}`}>
-              <Icon size={17} className={color} />
+              <BrandIcon icon={Icon} brandClass={brandClass} size={17} className={color} />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -801,6 +1130,96 @@ function BigQueryConfigure({ form, set, errors }: { form: BigQueryForm; set: (f:
   )
 }
 
+function RedisConfigure({ form, set, errors }: { form: RedisForm; set: (f: RedisForm) => void; errors: FieldErrors }) {
+  const f = <K extends keyof RedisForm>(k: K, v: RedisForm[K]) => set({ ...form, [k]: v })
+  const usesConnectionString = form.connectionMode === 'connectionString'
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => f('name', v)} placeholder="e.g. Redis Cache Prod" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => f('description', v)} placeholder="Keys, streams, and module-backed queries" />
+      </FieldRow>
+
+      <Divider label="Connection" />
+      <AuthTabs
+        value={form.connectionMode}
+        onChange={v => f('connectionMode', v as RedisForm['connectionMode'])}
+        types={[{ id: 'fields', label: 'Host / Port' }, { id: 'connectionString', label: 'Connection String' }]}
+      />
+      {usesConnectionString ? (
+        <FieldRow label="Connection String" error={errors.connectionString}>
+          <FInput value={form.connectionString} onChange={v => f('connectionString', v)} placeholder="redis://user:pass@localhost:6379/0 or rediss://..." error={errors.connectionString} />
+        </FieldRow>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <FieldRow label="Host" error={errors.host}>
+                <FInput value={form.host} onChange={v => f('host', v)} placeholder="localhost" error={errors.host} />
+              </FieldRow>
+            </div>
+            <FieldRow label="Port" error={errors.port}>
+              <FInput value={form.port} onChange={v => f('port', v)} placeholder="6379" error={errors.port} />
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Username (optional)">
+              <FInput value={form.username} onChange={v => f('username', v)} placeholder="default" />
+            </FieldRow>
+            <FieldRow label="Password">
+              <FInput type="password" value={form.password} onChange={v => f('password', v)} placeholder="••••••••" />
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Database">
+              <FInput value={form.database} onChange={v => f('database', v)} placeholder="0" />
+            </FieldRow>
+            <div className="pt-6">
+              <Toggle value={form.tls} onChange={v => f('tls', v)} label="TLS / rediss" />
+            </div>
+          </div>
+        </>
+      )}
+
+      <Divider label="Defaults" />
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Default Mode">
+          <FSelect value={form.defaultQueryMode} onChange={v => f('defaultQueryMode', v as RedisForm['defaultQueryMode'])}>
+            <option value="command">Command</option>
+            <option value="search">RediSearch</option>
+            <option value="json">RedisJSON</option>
+            <option value="timeseries">TimeSeries</option>
+            <option value="stream">Streams</option>
+            <option value="catalog">Catalog</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Default Value Type">
+          <FSelect value={form.defaultValueType} onChange={v => f('defaultValueType', v as RedisForm['defaultValueType'])}>
+            {['auto', 'string', 'hash', 'list', 'set', 'zset', 'json', 'timeseries', 'stream', 'search'].map(option => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </FSelect>
+        </FieldRow>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Default Key Pattern">
+          <FInput value={form.defaultKeyPattern} onChange={v => f('defaultKeyPattern', v)} placeholder="user:*" />
+        </FieldRow>
+        <FieldRow label="Default Search Index" error={errors.defaultSearchIndex}>
+          <FInput value={form.defaultSearchIndex} onChange={v => f('defaultSearchIndex', v)} placeholder="idx:users" error={errors.defaultSearchIndex} />
+        </FieldRow>
+      </div>
+
+      <Divider label="Schedule" />
+      <FieldRow label="Sync Interval">
+        <ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} />
+      </FieldRow>
+    </div>
+  )
+}
+
 /* ── CSV parser (minimal, handles quoted fields) ─────────────────── */
 function parseCSV(text: string): Record<string, unknown>[] {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split('\n')
@@ -1052,19 +1471,36 @@ function TestStep({ type, form, onJobUpdate }: {
     return () => ctrl.abort()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const bannerClass = status === 'running'
+    ? 'bg-indigo-500/5 border-indigo-500/20'
+    : status === 'succeeded'
+      ? 'bg-emerald-500/5 border-emerald-500/20'
+      : 'bg-rose-500/5 border-rose-500/20'
+
   return (
     <div className="animate-fade-in space-y-4">
-      <div className={`flex items-center gap-3 p-3.5 rounded-xl border ${status === 'running' ? 'bg-indigo-500/5 border-indigo-500/20' : 'bg-emerald-500/5 border-emerald-500/20'}`}>
+      <div className={`flex items-center gap-3 p-3.5 rounded-xl border ${bannerClass}`}>
         {status === 'running'
           ? <Loader2 size={16} className="text-indigo-400 animate-spin shrink-0" />
-          : <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />}
+          : status === 'succeeded'
+            ? <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+            : <AlertCircle size={16} className="text-rose-400 shrink-0" />}
         <div className="flex-1">
           <div className="text-sm font-medium text-chef-text">
-            {status === 'running' ? 'Testing connection…' : 'Connection verified successfully'}
+            {status === 'running'
+              ? 'Testing connection…'
+              : status === 'succeeded'
+                ? 'Connection verified successfully'
+                : 'Connection test failed'}
           </div>
           {status === 'running' && (
             <div className="mt-1.5 h-1 bg-chef-border rounded-full overflow-hidden">
               <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
+            </div>
+          )}
+          {status === 'failed' && (
+            <div className="mt-1 text-[11px] text-rose-300">
+              Review the worker log below. You can go back to fix the config or continue anyway.
             </div>
           )}
         </div>
@@ -1149,48 +1585,55 @@ function AppInsightsConfigure({
   const ff = <K extends keyof AppInsightsForm>(k: K, v: AppInsightsForm[K]) =>
     set({ ...form, [k]: v })
 
+  const isApiKey = form.authMode === 'api_key'
   const isWorkspace = form.mode === 'workspace'
+  const parsedConnection = parseAppInsightsConnectionString(form.connectionString)
 
-  const guideSteps = isWorkspace ? [
-    { n: 1, text: <>In <b>Azure Portal</b> → <b>Microsoft Entra ID</b> → <b>App registrations</b> → <b>New registration</b>. Name it anything (e.g. "dataChef").</> },
-    { n: 2, text: <>Open the new registration → <b>Certificates &amp; secrets</b> → <b>New client secret</b>. Copy the <b>Value</b> (not the ID) — this is your Client Secret.</> },
-    { n: 3, text: <>Copy <b>Application (client) ID</b> and <b>Directory (tenant) ID</b> from the app registration Overview page.</> },
-    { n: 4, text: <>Open your <b>Log Analytics workspace</b> (linked to your App Insights) → <b>Overview</b> → copy the <b>Workspace ID</b> (GUID).</> },
-    { n: 5, text: <>In the Log Analytics workspace → <b>Access control (IAM)</b> → <b>Add role assignment</b> → choose <code className="bg-chef-card px-1 rounded">Log Analytics Reader</code> → select your app registration.</> },
+  const guideSteps = isApiKey ? [
+    { n: 1, text: <>Open your <b>Application Insights</b> resource → <b>API Access</b>.</> },
+    { n: 2, text: <>Choose <b>Create API key</b> and enable read/query permissions.</> },
+    { n: 3, text: <>Copy the generated <b>API key</b> value immediately. Azure only shows it once.</> },
+    { n: 4, text: <>Open <b>Properties</b> and copy the <b>Application ID</b> (GUID).</> },
+    { n: 5, text: <>Optional: paste the App Insights connection string here to auto-fill the Application ID when it includes <code className="bg-chef-card px-1 rounded">ApplicationId</code>.</> },
+  ] : isWorkspace ? [
+    { n: 1, text: <>In <b>Azure Portal</b> → <b>Microsoft Entra ID</b> → <b>App registrations</b> → <b>New registration</b>.</> },
+    { n: 2, text: <>Open the registration → <b>Certificates &amp; secrets</b> → <b>New client secret</b>. Copy the <b>Value</b>.</> },
+    { n: 3, text: <>Copy <b>Application (client) ID</b> and <b>Directory (tenant) ID</b> from the registration Overview page.</> },
+    { n: 4, text: <>Open the linked <b>Log Analytics workspace</b> → <b>Overview</b> → copy the <b>Workspace ID</b>.</> },
+    { n: 5, text: <>Grant the app registration <code className="bg-chef-card px-1 rounded">Log Analytics Reader</code> on that workspace.</> },
   ] : [
-    { n: 1, text: <>In <b>Azure Portal</b> → <b>Microsoft Entra ID</b> → <b>App registrations</b> → <b>New registration</b>. Name it anything (e.g. "dataChef").</> },
-    { n: 2, text: <>Open the new registration → <b>Certificates &amp; secrets</b> → <b>New client secret</b>. Copy the <b>Value</b> — this is your Client Secret.</> },
-    { n: 3, text: <>Copy <b>Application (client) ID</b> and <b>Directory (tenant) ID</b> from the app registration Overview page.</> },
-    { n: 4, text: <>Open your <b>Application Insights</b> resource → <b>Properties</b> → copy the <b>Application ID</b> (GUID).</> },
-    { n: 5, text: <>In App Insights → <b>Access control (IAM)</b> → <b>Add role assignment</b> → choose <code className="bg-chef-card px-1 rounded">Monitoring Reader</code> → select your app registration.</> },
+    { n: 1, text: <>In <b>Azure Portal</b> → <b>Microsoft Entra ID</b> → <b>App registrations</b> → <b>New registration</b>.</> },
+    { n: 2, text: <>Open the registration → <b>Certificates &amp; secrets</b> → <b>New client secret</b>. Copy the <b>Value</b>.</> },
+    { n: 3, text: <>Copy <b>Application (client) ID</b> and <b>Directory (tenant) ID</b> from the registration Overview page.</> },
+    { n: 4, text: <>Open your <b>Application Insights</b> resource → <b>Properties</b> → copy the <b>Application ID</b>.</> },
+    { n: 5, text: <>Grant the app registration <code className="bg-chef-card px-1 rounded">Monitoring Reader</code> on the App Insights resource.</> },
   ]
 
   return (
     <div className="space-y-4 animate-fade-in">
 
-      {/* Mode selector */}
       <div className="space-y-1.5">
-        <div className="text-[10px] uppercase tracking-wider text-chef-muted">API Mode</div>
+        <div className="text-[10px] uppercase tracking-wider text-chef-muted">Auth Flow</div>
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={() => ff('mode', 'workspace')}
-            className={`p-3 rounded-xl border text-left transition-all ${isWorkspace ? 'border-cyan-500/60 bg-cyan-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+            onClick={() => ff('authMode', 'api_key')}
+            className={`p-3 rounded-xl border text-left transition-all ${isApiKey ? 'border-cyan-500/60 bg-cyan-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
           >
-            <div className={`text-[11px] font-semibold mb-0.5 ${isWorkspace ? 'text-cyan-400' : 'text-chef-muted'}`}>
-              Azure Monitor <span className="text-[9px] font-normal bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded ml-1">Recommended</span>
+            <div className={`text-[11px] font-semibold mb-0.5 ${isApiKey ? 'text-cyan-400' : 'text-chef-muted'}`}>
+              App Insights API key <span className="text-[9px] font-normal bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded ml-1">Recommended</span>
             </div>
-            <div className="text-[10px] text-chef-muted leading-snug">Workspace ID · newer endpoint · supports all workspace-based resources</div>
+            <div className="text-[10px] text-chef-muted leading-snug">Application ID + API key against the App Insights Analytics endpoint</div>
           </button>
           <button
             type="button"
-            onClick={() => ff('mode', 'appinsights')}
-            className={`p-3 rounded-xl border text-left transition-all ${!isWorkspace ? 'border-cyan-500/60 bg-cyan-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+            onClick={() => ff('authMode', 'entra_client_secret')}
+            className={`p-3 rounded-xl border text-left transition-all ${!isApiKey ? 'border-cyan-500/60 bg-cyan-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
           >
-            <div className={`text-[11px] font-semibold mb-0.5 ${!isWorkspace ? 'text-cyan-400' : 'text-chef-muted'}`}>
-              App Insights API <span className="text-[9px] font-normal bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded ml-1">Legacy</span>
+            <div className={`text-[11px] font-semibold mb-0.5 ${!isApiKey ? 'text-cyan-400' : 'text-chef-muted'}`}>
+              Entra OAuth <span className="text-[9px] font-normal bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded ml-1">Legacy</span>
             </div>
-            <div className="text-[10px] text-chef-muted leading-snug">App ID · classic endpoint · use if workspace mode fails</div>
+            <div className="text-[10px] text-chef-muted leading-snug">Retained for older App Insights OAuth setups</div>
           </button>
         </div>
       </div>
@@ -1203,30 +1646,90 @@ function AppInsightsConfigure({
       </FieldRow>
 
       <div className="border-t border-chef-border pt-4 space-y-3">
-        <div className="text-[10px] uppercase tracking-wider text-chef-muted flex items-center gap-1.5"><Key size={10} /> Azure Credentials</div>
+        <div className="text-[10px] uppercase tracking-wider text-chef-muted flex items-center gap-1.5"><Key size={10} /> Connector Credentials</div>
+        <FieldRow
+          label="Connection String (optional)"
+          hint="Paste an App Insights connection string to auto-fill Application ID when ApplicationId is present."
+          error={errors.connectionString}
+        >
+          <div className="space-y-2">
+            <FTextarea
+              value={form.connectionString}
+              onChange={v => ff('connectionString', v)}
+              rows={3}
+              placeholder="InstrumentationKey=...;IngestionEndpoint=https://...;ApplicationId=..."
+              error={errors.connectionString}
+            />
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-chef-muted">
+              <button
+                type="button"
+                onClick={() => {
+                  const parsed = parseAppInsightsConnectionString(form.connectionString)
+                  if (parsed.applicationId) ff('appId', parsed.applicationId)
+                }}
+                className="px-2 py-1 rounded-md border border-chef-border hover:border-cyan-500/40 hover:text-chef-text transition-colors"
+              >
+                Use Application ID
+              </button>
+              {parsedConnection.applicationId && (
+                <span className="text-emerald-400">Detected ApplicationId {parsedConnection.applicationId.slice(0, 8)}…</span>
+              )}
+              {!parsedConnection.applicationId && form.connectionString.trim() && (
+                <span className="text-amber-400">No ApplicationId found in the connection string.</span>
+              )}
+            </div>
+          </div>
+        </FieldRow>
 
-        {/* Mode-specific ID field */}
-        {isWorkspace ? (
-          <FieldRow label="Workspace ID" hint="Log Analytics workspace → Overview → Workspace ID" error={errors.workspaceId}>
-            <FInput value={form.workspaceId} onChange={v => ff('workspaceId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.workspaceId} />
+        <FieldRow label="Application ID" hint="App Insights resource → Properties → Application ID" error={errors.appId}>
+          <FInput value={form.appId} onChange={v => ff('appId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.appId} />
+        </FieldRow>
+
+        {isApiKey ? (
+          <FieldRow label="API Key" hint="App Insights → API Access → Create API key" error={errors.apiKey}>
+            <FInput type="password" value={form.apiKey} onChange={v => ff('apiKey', v)} placeholder="••••••••" error={errors.apiKey} />
           </FieldRow>
         ) : (
-          <FieldRow label="Application ID" hint="App Insights resource → Properties → Application ID" error={errors.appId}>
-            <FInput value={form.appId} onChange={v => ff('appId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.appId} />
-          </FieldRow>
+          <>
+            <div className="space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-chef-muted">Legacy OAuth Mode</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => ff('mode', 'workspace')}
+                  className={`p-3 rounded-xl border text-left transition-all ${isWorkspace ? 'border-cyan-500/60 bg-cyan-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+                >
+                  <div className={`text-[11px] font-semibold mb-0.5 ${isWorkspace ? 'text-cyan-400' : 'text-chef-muted'}`}>Workspace</div>
+                  <div className="text-[10px] text-chef-muted leading-snug">Query the linked Log Analytics workspace</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => ff('mode', 'appinsights')}
+                  className={`p-3 rounded-xl border text-left transition-all ${!isWorkspace ? 'border-cyan-500/60 bg-cyan-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+                >
+                  <div className={`text-[11px] font-semibold mb-0.5 ${!isWorkspace ? 'text-cyan-400' : 'text-chef-muted'}`}>App ID</div>
+                  <div className="text-[10px] text-chef-muted leading-snug">Use the legacy App Insights OAuth endpoint</div>
+                </button>
+              </div>
+            </div>
+            {isWorkspace && (
+              <FieldRow label="Workspace ID" hint="Log Analytics workspace → Overview → Workspace ID" error={errors.workspaceId}>
+                <FInput value={form.workspaceId} onChange={v => ff('workspaceId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.workspaceId} />
+              </FieldRow>
+            )}
+            <FieldRow label="Tenant ID" hint="Microsoft Entra ID → Directory (tenant) ID" error={errors.tenantId}>
+              <FInput value={form.tenantId} onChange={v => ff('tenantId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.tenantId} />
+            </FieldRow>
+            <div className="grid grid-cols-2 gap-3">
+              <FieldRow label="Client ID" hint="App registration → Application (client) ID" error={errors.clientId}>
+                <FInput value={form.clientId} onChange={v => ff('clientId', v)} placeholder="App registration client_id" error={errors.clientId} />
+              </FieldRow>
+              <FieldRow label="Client Secret" error={errors.clientSecret}>
+                <FInput type="password" value={form.clientSecret} onChange={v => ff('clientSecret', v)} placeholder="••••••••" error={errors.clientSecret} />
+              </FieldRow>
+            </div>
+          </>
         )}
-
-        <FieldRow label="Tenant ID" hint="Azure AD → Overview → Directory (tenant) ID" error={errors.tenantId}>
-          <FInput value={form.tenantId} onChange={v => ff('tenantId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.tenantId} />
-        </FieldRow>
-        <div className="grid grid-cols-2 gap-3">
-          <FieldRow label="Client ID" hint="App registration → Overview → Application (client) ID" error={errors.clientId}>
-            <FInput value={form.clientId} onChange={v => ff('clientId', v)} placeholder="App registration client_id" error={errors.clientId} />
-          </FieldRow>
-          <FieldRow label="Client Secret" error={errors.clientSecret}>
-            <FInput type="password" value={form.clientSecret} onChange={v => ff('clientSecret', v)} placeholder="••••••••" error={errors.clientSecret} />
-          </FieldRow>
-        </div>
       </div>
 
       {/* How-to guide (collapsible) */}
@@ -1253,9 +1756,9 @@ function AppInsightsConfigure({
             <div className="mt-2 pt-2 border-t border-chef-border/50 text-[10px] text-chef-muted">
               Role required:{' '}
               <code className="bg-chef-card px-1 rounded text-cyan-400">
-                {isWorkspace ? 'Log Analytics Reader' : 'Monitoring Reader'}
+                {isApiKey ? 'API key with read/query access' : isWorkspace ? 'Log Analytics Reader' : 'Monitoring Reader'}
               </code>
-              {' '}on the {isWorkspace ? 'Log Analytics workspace' : 'App Insights resource'}.
+              {!isApiKey && <> on the {isWorkspace ? 'Log Analytics workspace' : 'App Insights resource'}.</>}
             </div>
           </div>
         )}
@@ -1263,7 +1766,633 @@ function AppInsightsConfigure({
 
       <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-[11px] text-amber-300 flex items-start gap-2">
         <Shield size={12} className="mt-0.5 shrink-0 text-amber-400" />
-        <span><span className="font-semibold text-amber-400">Secure: </span>Credentials are stored server-side only and never returned to the browser after this step.</span>
+        <span><span className="font-semibold text-amber-400">Secure: </span>Credentials are stored server-side only and never returned to the browser after this step. New App Insights connectors use API-key auth by default; Entra OAuth is retained only for legacy compatibility.</span>
+      </div>
+    </div>
+  )
+}
+
+function AzureMonitorConfigure({
+  form, set, errors,
+}: { form: AzureMonitorForm; set: (f: AzureMonitorForm) => void; errors: FieldErrors }) {
+  const ff = <K extends keyof AzureMonitorForm>(k: K, v: AzureMonitorForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => ff('name', v)} placeholder="e.g. Azure Monitor Prod" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => ff('description', v)} placeholder="Workspace-backed logs and metrics" />
+      </FieldRow>
+      <Divider label="Workspace" />
+      <FieldRow label="Workspace ID" hint="Log Analytics workspace GUID" error={errors.workspaceId}>
+        <FInput value={form.workspaceId} onChange={v => ff('workspaceId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.workspaceId} />
+      </FieldRow>
+      <Divider label="Authentication" />
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Tenant ID" error={errors.tenantId}>
+          <FInput value={form.tenantId} onChange={v => ff('tenantId', v)} placeholder="Directory (tenant) ID" error={errors.tenantId} />
+        </FieldRow>
+        <FieldRow label="Client ID" error={errors.clientId}>
+          <FInput value={form.clientId} onChange={v => ff('clientId', v)} placeholder="Application (client) ID" error={errors.clientId} />
+        </FieldRow>
+      </div>
+      <FieldRow label="Client Secret" error={errors.clientSecret}>
+        <FInput type="password" value={form.clientSecret} onChange={v => ff('clientSecret', v)} placeholder="••••••••" error={errors.clientSecret} />
+      </FieldRow>
+      <Divider label="Default Query" />
+      <FieldRow label="KQL">
+        <FTextarea value={form.defaultQuery} onChange={v => ff('defaultQuery', v)} rows={5} />
+      </FieldRow>
+    </div>
+  )
+}
+
+function ElasticObservabilityConfigure({
+  form, set, errors,
+}: { form: ElasticObservabilityForm; set: (f: ElasticObservabilityForm) => void; errors: FieldErrors }) {
+  const ff = <K extends keyof ElasticObservabilityForm>(k: K, v: ElasticObservabilityForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => ff('name', v)} placeholder="e.g. Elastic Logs" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => ff('description', v)} placeholder="Elasticsearch or OpenSearch cluster" />
+      </FieldRow>
+      <FieldRow label="Endpoint URL" error={errors.endpoint}>
+        <FInput value={form.endpoint} onChange={v => ff('endpoint', v)} placeholder="https://elastic.example.com:9200" error={errors.endpoint} />
+      </FieldRow>
+      <FieldRow label="Index Pattern" error={errors.indexPattern}>
+        <FInput value={form.indexPattern} onChange={v => ff('indexPattern', v)} placeholder="logs-*" error={errors.indexPattern} />
+      </FieldRow>
+      <Divider label="Authentication" />
+      <AuthTabs value={form.authType} onChange={v => ff('authType', v as ElasticObservabilityForm['authType'])} types={[{ id: 'basic', label: 'Basic' }, { id: 'apikey', label: 'API Key' }]} />
+      {form.authType === 'basic' ? (
+        <div className="grid grid-cols-2 gap-3">
+          <FieldRow label="Username" error={errors.username}>
+            <FInput value={form.username} onChange={v => ff('username', v)} placeholder="elastic" error={errors.username} />
+          </FieldRow>
+          <FieldRow label="Password" error={errors.password}>
+            <FInput type="password" value={form.password} onChange={v => ff('password', v)} placeholder="••••••••" error={errors.password} />
+          </FieldRow>
+        </div>
+      ) : (
+        <FieldRow label="API Key" error={errors.apiKey}>
+          <FInput type="password" value={form.apiKey} onChange={v => ff('apiKey', v)} placeholder="base64-api-key" error={errors.apiKey} />
+        </FieldRow>
+      )}
+      <Divider label="Defaults" />
+      <FieldRow label="Default KQL">
+        <FTextarea value={form.defaultQuery} onChange={v => ff('defaultQuery', v)} rows={4} />
+      </FieldRow>
+      <FieldRow label="Sync Interval">
+        <ScheduleSelect value={form.schedule} onChange={v => ff('schedule', v)} />
+      </FieldRow>
+    </div>
+  )
+}
+
+function DatadogConfigure({
+  form, set, errors,
+}: { form: DatadogForm; set: (f: DatadogForm) => void; errors: FieldErrors }) {
+  const ff = <K extends keyof DatadogForm>(k: K, v: DatadogForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => ff('name', v)} placeholder="e.g. Datadog Logs" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => ff('description', v)} placeholder="Datadog observability queries" />
+      </FieldRow>
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Site" error={errors.site}>
+          <FSelect value={form.site} onChange={v => ff('site', v)} error={errors.site}>
+            <option value="datadoghq.com">datadoghq.com</option>
+            <option value="us3.datadoghq.com">us3.datadoghq.com</option>
+            <option value="us5.datadoghq.com">us5.datadoghq.com</option>
+            <option value="datadoghq.eu">datadoghq.eu</option>
+            <option value="ddog-gov.com">ddog-gov.com</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Source">
+          <FSelect value={form.source} onChange={v => ff('source', v as DatadogForm['source'])}>
+            <option value="logs">Logs</option>
+            <option value="events">Events</option>
+          </FSelect>
+        </FieldRow>
+      </div>
+      <Divider label="Authentication" />
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="API Key" error={errors.apiKey}>
+          <FInput type="password" value={form.apiKey} onChange={v => ff('apiKey', v)} placeholder="••••••••" error={errors.apiKey} />
+        </FieldRow>
+        <FieldRow label="Application Key" error={errors.applicationKey}>
+          <FInput type="password" value={form.applicationKey} onChange={v => ff('applicationKey', v)} placeholder="••••••••" error={errors.applicationKey} />
+        </FieldRow>
+      </div>
+      <Divider label="Defaults" />
+      <FieldRow label="Default KQL">
+        <FTextarea value={form.defaultQuery} onChange={v => ff('defaultQuery', v)} rows={4} />
+      </FieldRow>
+      <FieldRow label="Sync Interval">
+        <ScheduleSelect value={form.schedule} onChange={v => ff('schedule', v)} />
+      </FieldRow>
+    </div>
+  )
+}
+
+function AzureB2CConfigure({
+  form, set, errors,
+}: { form: AzureB2CForm; set: (f: AzureB2CForm) => void; errors: FieldErrors }) {
+  const ff = <K extends keyof AzureB2CForm>(k: K, v: AzureB2CForm[K]) => set({ ...form, [k]: v })
+  const isCertificate = form.authMode === 'client_certificate'
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-[11px] text-amber-300 flex items-start gap-2">
+        <AlertTriangle size={12} className="mt-0.5 shrink-0 text-amber-400" />
+        <span><span className="font-semibold text-amber-400">Lifecycle notice: </span>Azure AD B2C is not available for new customers after May 1, 2025. This connector targets existing B2C tenants and keeps the runtime reusable for a future Entra External ID variant.</span>
+      </div>
+
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => ff('name', v)} placeholder="e.g. Contoso B2C Directory" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => ff('description', v)} placeholder="Users, user flows, and custom policies" />
+      </FieldRow>
+
+      <div className="border-t border-chef-border pt-4 space-y-3">
+        <div className="text-[10px] uppercase tracking-wider text-chef-muted flex items-center gap-1.5"><Key size={10} /> Microsoft Graph Credentials</div>
+        <FieldRow label="Tenant ID" hint="Azure AD B2C tenant ID / directory tenant ID" error={errors.tenantId}>
+          <FInput value={form.tenantId} onChange={v => ff('tenantId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.tenantId} />
+        </FieldRow>
+        <FieldRow label="Client ID" hint="App registration application (client) ID" error={errors.clientId}>
+          <FInput value={form.clientId} onChange={v => ff('clientId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.clientId} />
+        </FieldRow>
+
+        <div className="space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wider text-chef-muted">Auth Mode</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => ff('authMode', 'client_secret')}
+              className={`p-3 rounded-xl border text-left transition-all ${!isCertificate ? 'border-teal-500/60 bg-teal-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+            >
+              <div className={`text-[11px] font-semibold mb-0.5 ${!isCertificate ? 'text-teal-400' : 'text-chef-muted'}`}>Client Secret</div>
+              <div className="text-[10px] text-chef-muted leading-snug">Standard client credentials flow</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => ff('authMode', 'client_certificate')}
+              className={`p-3 rounded-xl border text-left transition-all ${isCertificate ? 'border-teal-500/60 bg-teal-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+            >
+              <div className={`text-[11px] font-semibold mb-0.5 ${isCertificate ? 'text-teal-400' : 'text-chef-muted'}`}>Client Certificate</div>
+              <div className="text-[10px] text-chef-muted leading-snug">PEM certificate and PEM private key</div>
+            </button>
+          </div>
+        </div>
+
+        {!isCertificate ? (
+          <FieldRow label="Client Secret" error={errors.clientSecret}>
+            <FInput type="password" value={form.clientSecret} onChange={v => ff('clientSecret', v)} placeholder="••••••••" error={errors.clientSecret} />
+          </FieldRow>
+        ) : (
+          <div className="space-y-3">
+            <FieldRow label="Certificate PEM" error={errors.certificatePem}>
+              <FTextarea value={form.certificatePem} onChange={v => ff('certificatePem', v)} rows={4} placeholder="-----BEGIN CERTIFICATE-----" error={errors.certificatePem} />
+            </FieldRow>
+            <FieldRow label="Private Key PEM" error={errors.privateKeyPem}>
+              <FTextarea value={form.privateKeyPem} onChange={v => ff('privateKeyPem', v)} rows={5} placeholder="-----BEGIN PRIVATE KEY-----" error={errors.privateKeyPem} />
+            </FieldRow>
+            <FieldRow label="Thumbprint (optional)" hint="Hex SHA-1 thumbprint if your app registration expects x5t">
+              <FInput value={form.thumbprint} onChange={v => ff('thumbprint', v)} placeholder="A1B2C3..." />
+            </FieldRow>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Default Resource">
+          <FSelect value={form.resource} onChange={v => ff('resource', v as AzureB2CForm['resource'])}>
+            <option value="users">users</option>
+            <option value="userFlows">userFlows</option>
+            <option value="customPolicies">customPolicies</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Sync Interval">
+          <FSelect value={form.schedule} onChange={v => ff('schedule', v)}>
+            <option value="on-demand">On demand</option>
+            <option value="1h">Every hour</option>
+            <option value="6h">Every 6 hours</option>
+            <option value="24h">Daily</option>
+          </FSelect>
+        </FieldRow>
+      </div>
+
+      <div className="rounded-xl border border-chef-border bg-chef-bg p-3 space-y-2">
+        <div className="text-[11px] font-semibold text-chef-text">Supported dataset resources</div>
+        <div className="flex flex-wrap gap-2 text-[10px]">
+          {['users', 'userFlows', 'customPolicies'].map(resource => (
+            <span key={resource} className="px-2 py-1 rounded-md bg-teal-500/10 border border-teal-500/20 text-teal-300 font-mono">{resource}</span>
+          ))}
+        </div>
+        <div className="text-[10px] text-chef-muted leading-snug">Advanced paths are also allowed for these families only: <code className="bg-chef-card px-1 rounded">/users</code>, <code className="bg-chef-card px-1 rounded">/identity/b2cUserFlows</code>, <code className="bg-chef-card px-1 rounded">/trustFramework/policies</code>.</div>
+        <div className="text-[10px] text-chef-muted leading-snug">Required Microsoft Graph app permissions: <code className="bg-chef-card px-1 rounded">User.Read.All</code>, <code className="bg-chef-card px-1 rounded">IdentityUserFlow.Read.All</code>, and <code className="bg-chef-card px-1 rounded">Policy.Read.All</code>.</div>
+      </div>
+
+      <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[11px] text-sky-200 flex items-start gap-2">
+        <Shield size={12} className="mt-0.5 shrink-0 text-sky-400" />
+        <span><span className="font-semibold text-sky-300">Beta note: </span><code className="bg-chef-card px-1 rounded">userFlows</code> and <code className="bg-chef-card px-1 rounded">customPolicies</code> use Microsoft Graph beta endpoints in v1. <code className="bg-chef-card px-1 rounded">users</code> stays on Graph v1.0.</span>
+      </div>
+    </div>
+  )
+}
+
+function AzureEntraIdConfigure({
+  form, set, errors,
+}: { form: AzureEntraIdForm; set: (f: AzureEntraIdForm) => void; errors: FieldErrors }) {
+  const ff = <K extends keyof AzureEntraIdForm>(k: K, v: AzureEntraIdForm[K]) => set({ ...form, [k]: v })
+  const isCertificate = form.authMode === 'client_certificate'
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[11px] text-sky-200 flex items-start gap-2">
+        <Shield size={12} className="mt-0.5 shrink-0 text-sky-400" />
+        <span><span className="font-semibold text-sky-300">Scope: </span>Azure Entra ID reads Microsoft Graph <code className="bg-chef-card px-1 rounded">users</code>, <code className="bg-chef-card px-1 rounded">groups</code>, and <code className="bg-chef-card px-1 rounded">applications</code> using stable v1.0 endpoints.</span>
+      </div>
+
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => ff('name', v)} placeholder="e.g. Corporate Entra Directory" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => ff('description', v)} placeholder="Directory users, groups, and app registrations" />
+      </FieldRow>
+
+      <div className="border-t border-chef-border pt-4 space-y-3">
+        <div className="text-[10px] uppercase tracking-wider text-chef-muted flex items-center gap-1.5"><Key size={10} /> Microsoft Graph Credentials</div>
+        <FieldRow label="Tenant ID" hint="Microsoft Entra ID directory tenant ID" error={errors.tenantId}>
+          <FInput value={form.tenantId} onChange={v => ff('tenantId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.tenantId} />
+        </FieldRow>
+        <FieldRow label="Client ID" hint="App registration application (client) ID" error={errors.clientId}>
+          <FInput value={form.clientId} onChange={v => ff('clientId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.clientId} />
+        </FieldRow>
+
+        <div className="space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wider text-chef-muted">Auth Mode</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => ff('authMode', 'client_secret')}
+              className={`p-3 rounded-xl border text-left transition-all ${!isCertificate ? 'border-sky-500/60 bg-sky-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+            >
+              <div className={`text-[11px] font-semibold mb-0.5 ${!isCertificate ? 'text-sky-300' : 'text-chef-muted'}`}>Client Secret</div>
+              <div className="text-[10px] text-chef-muted leading-snug">Standard app-only Microsoft Graph auth</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => ff('authMode', 'client_certificate')}
+              className={`p-3 rounded-xl border text-left transition-all ${isCertificate ? 'border-sky-500/60 bg-sky-500/10' : 'border-chef-border bg-chef-bg hover:border-chef-border'}`}
+            >
+              <div className={`text-[11px] font-semibold mb-0.5 ${isCertificate ? 'text-sky-300' : 'text-chef-muted'}`}>Client Certificate</div>
+              <div className="text-[10px] text-chef-muted leading-snug">PEM certificate and PEM private key</div>
+            </button>
+          </div>
+        </div>
+
+        {!isCertificate ? (
+          <FieldRow label="Client Secret" error={errors.clientSecret}>
+            <FInput type="password" value={form.clientSecret} onChange={v => ff('clientSecret', v)} placeholder="••••••••" error={errors.clientSecret} />
+          </FieldRow>
+        ) : (
+          <div className="space-y-3">
+            <FieldRow label="Certificate PEM" error={errors.certificatePem}>
+              <FTextarea value={form.certificatePem} onChange={v => ff('certificatePem', v)} rows={4} placeholder="-----BEGIN CERTIFICATE-----" error={errors.certificatePem} />
+            </FieldRow>
+            <FieldRow label="Private Key PEM" error={errors.privateKeyPem}>
+              <FTextarea value={form.privateKeyPem} onChange={v => ff('privateKeyPem', v)} rows={5} placeholder="-----BEGIN PRIVATE KEY-----" error={errors.privateKeyPem} />
+            </FieldRow>
+            <FieldRow label="Thumbprint (optional)">
+              <FInput value={form.thumbprint} onChange={v => ff('thumbprint', v)} placeholder="A1B2C3..." />
+            </FieldRow>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Default Resource">
+          <FSelect value={form.resource} onChange={v => ff('resource', v as AzureEntraIdForm['resource'])}>
+            <option value="users">users</option>
+            <option value="groups">groups</option>
+            <option value="applications">applications</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Sync Interval">
+          <FSelect value={form.schedule} onChange={v => ff('schedule', v)}>
+            <option value="on-demand">On demand</option>
+            <option value="1h">Every hour</option>
+            <option value="6h">Every 6 hours</option>
+            <option value="24h">Daily</option>
+          </FSelect>
+        </FieldRow>
+      </div>
+
+      <div className="rounded-xl border border-chef-border bg-chef-bg p-3 space-y-2">
+        <div className="text-[11px] font-semibold text-chef-text">Supported dataset resources</div>
+        <div className="flex flex-wrap gap-2 text-[10px]">
+          {['users', 'groups', 'applications'].map(resource => (
+            <span key={resource} className="px-2 py-1 rounded-md bg-sky-500/10 border border-sky-500/20 text-sky-200 font-mono">{resource}</span>
+          ))}
+        </div>
+        <div className="text-[10px] text-chef-muted leading-snug">Advanced paths are also allowed for these families only: <code className="bg-chef-card px-1 rounded">/users</code>, <code className="bg-chef-card px-1 rounded">/groups</code>, <code className="bg-chef-card px-1 rounded">/applications</code>.</div>
+        <div className="text-[10px] text-chef-muted leading-snug">Recommended Microsoft Graph application permissions: <code className="bg-chef-card px-1 rounded">User.Read.All</code>, <code className="bg-chef-card px-1 rounded">Group.Read.All</code>, and <code className="bg-chef-card px-1 rounded">Application.Read.All</code>.</div>
+      </div>
+    </div>
+  )
+}
+
+function GitHubConfigure({
+  form, set, errors,
+}: { form: GitHubForm; set: (f: GitHubForm) => void; errors: FieldErrors }) {
+  const [loadingRepos, setLoadingRepos] = useState(false)
+  const [authBusy, setAuthBusy] = useState<'oauth' | 'app' | null>(null)
+  const [authMessage, setAuthMessage] = useState<string>('')
+  const ff = <K extends keyof GitHubForm>(k: K, v: GitHubForm[K]) => set({ ...form, [k]: v })
+
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as Record<string, unknown> | null
+      if (!data || data.source !== 'datachef-github-auth') return
+      setAuthBusy(null)
+      if (typeof data.error === 'string' && data.error) {
+        setAuthMessage(data.error)
+        return
+      }
+      set({
+        ...form,
+        transactionId: String(data.transactionId ?? ''),
+        accountLogin: String(data.login ?? ''),
+        reposLoaded: false,
+        availableRepos: [],
+        selectedRepos: [],
+      })
+      setAuthMessage(`Authorized as ${String(data.login ?? 'GitHub user')}`)
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [form, set])
+
+  async function loadRepos() {
+    if (form.authMode === 'pat' && !form.token.trim()) {
+      setAuthMessage('Enter a GitHub personal access token first.')
+      return
+    }
+    if (form.authMode !== 'pat' && !form.transactionId.trim()) {
+      setAuthMessage('Complete GitHub authorization first.')
+      return
+    }
+    setLoadingRepos(true)
+    setAuthMessage('')
+    try {
+      const url = new URL('/api/connectors/github/catalog', window.location.origin)
+      if (form.authMode !== 'pat') {
+        url.searchParams.set('transactionId', form.transactionId)
+      }
+
+      if (form.authMode === 'pat') {
+        const response = await fetch('/api/connectors/github/catalog', {
+          method: 'GET',
+          headers: {
+            'x-datachef-github-pat': form.token,
+          },
+        })
+        const payload = await response.json()
+        if (!response.ok) throw new Error(String(payload.error ?? 'Failed to load repositories'))
+        const repos = Array.isArray(payload.repos) ? payload.repos as GitHubRepoOption[] : []
+        set({ ...form, reposLoaded: true, availableRepos: repos, selectedRepos: form.selectedRepos.filter(selected => repos.some(repo => repo.fullName === selected.fullName)) })
+        return
+      }
+
+      const response = await fetch(url.toString())
+      const payload = await response.json()
+      if (!response.ok) throw new Error(String(payload.error ?? 'Failed to load repositories'))
+      const repos = Array.isArray(payload.repos) ? payload.repos as GitHubRepoOption[] : []
+      set({ ...form, reposLoaded: true, availableRepos: repos, selectedRepos: form.selectedRepos.filter(selected => repos.some(repo => repo.fullName === selected.fullName)) })
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLoadingRepos(false)
+    }
+  }
+
+  async function launchAuth(provider: 'oauth' | 'app') {
+    setAuthBusy(provider)
+    setAuthMessage('')
+    try {
+      const path = provider === 'oauth'
+        ? '/api/connectors/github/oauth/start'
+        : '/api/connectors/github/app/install/start'
+      const payload = provider === 'oauth'
+        ? {
+            connectorName: form.name || 'GitHub',
+            connectorDescription: form.description,
+            clientId: form.oauthClientId,
+            clientSecret: form.oauthClientSecret,
+          }
+        : {
+            connectorName: form.name || 'GitHub',
+            connectorDescription: form.description,
+            appSlug: form.appSlug,
+            appId: form.appId,
+            clientId: form.appClientId,
+            clientSecret: form.appClientSecret,
+            privateKey: form.appPrivateKey,
+          }
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(String(body.error ?? 'Failed to start GitHub authorization'))
+      const targetUrl = String(body.authorizeUrl ?? body.installUrl ?? '')
+      if (!targetUrl) throw new Error('GitHub authorization URL was not returned')
+      window.open(targetUrl, 'github-auth', 'popup=yes,width=640,height=760')
+    } catch (error) {
+      setAuthBusy(null)
+      setAuthMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const filteredRepos = form.availableRepos.filter(repo =>
+    !form.repoSearch.trim() || repo.fullName.toLowerCase().includes(form.repoSearch.toLowerCase()),
+  )
+  const selectedSet = new Set(form.selectedRepos.map(repo => repo.fullName))
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => ff('name', v)} placeholder="e.g. Engineering GitHub" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => ff('description', v)} placeholder="Repos, pull requests, and issues for selected repositories" />
+      </FieldRow>
+
+      <Divider label="Authentication" />
+      <AuthTabs
+        value={form.authMode}
+        onChange={v => ff('authMode', v as GitHubForm['authMode'])}
+        types={[{ id: 'pat', label: 'PAT' }, { id: 'oauth', label: 'OAuth App' }, { id: 'app', label: 'GitHub App' }]}
+      />
+
+      {form.authMode === 'pat' ? (
+        <div className="space-y-3">
+          <FieldRow label="Personal Access Token" error={errors.token}>
+            <FInput type="password" value={form.token} onChange={v => ff('token', v)} placeholder="github_pat_..." error={errors.token} />
+          </FieldRow>
+          <div className="text-[10px] text-chef-muted leading-snug">
+            Use a fine-grained PAT with read access to repository metadata, pull requests, and issues for the repos you plan to sync.
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-chef-border bg-chef-bg p-4 space-y-3">
+          {form.authMode === 'oauth' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <FieldRow label="OAuth Client ID" error={errors.oauthClientId}>
+                <FInput value={form.oauthClientId} onChange={v => ff('oauthClientId', v)} placeholder="Iv1..." error={errors.oauthClientId} />
+              </FieldRow>
+              <FieldRow label="OAuth Client Secret" error={errors.oauthClientSecret}>
+                <FInput type="password" value={form.oauthClientSecret} onChange={v => ff('oauthClientSecret', v)} placeholder="••••••••" error={errors.oauthClientSecret} />
+              </FieldRow>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <FieldRow label="App Slug" error={errors.appSlug}>
+                  <FInput value={form.appSlug} onChange={v => ff('appSlug', v)} placeholder="my-github-app" error={errors.appSlug} />
+                </FieldRow>
+                <FieldRow label="App ID" error={errors.appId}>
+                  <FInput value={form.appId} onChange={v => ff('appId', v)} placeholder="123456" error={errors.appId} />
+                </FieldRow>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <FieldRow label="App Client ID" error={errors.appClientId}>
+                  <FInput value={form.appClientId} onChange={v => ff('appClientId', v)} placeholder="Iv1..." error={errors.appClientId} />
+                </FieldRow>
+                <FieldRow label="App Client Secret" error={errors.appClientSecret}>
+                  <FInput type="password" value={form.appClientSecret} onChange={v => ff('appClientSecret', v)} placeholder="••••••••" error={errors.appClientSecret} />
+                </FieldRow>
+              </div>
+              <FieldRow label="App Private Key (PEM)" error={errors.appPrivateKey}>
+                <FTextarea value={form.appPrivateKey} onChange={v => ff('appPrivateKey', v)} rows={5} placeholder="-----BEGIN RSA PRIVATE KEY-----" error={errors.appPrivateKey} />
+              </FieldRow>
+            </div>
+          )}
+          <div className="text-[11px] text-chef-muted leading-snug">
+            {form.authMode === 'oauth'
+              ? 'Authorize dataChef to access repositories on the user’s behalf.'
+              : 'Install the GitHub App on the repositories or organizations you want this workspace to read.'}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => launchAuth(form.authMode === 'oauth' ? 'oauth' : 'app')}
+              className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors"
+            >
+              {authBusy === form.authMode ? 'Waiting for GitHub…' : form.authMode === 'oauth' ? 'Authorize with GitHub' : 'Install GitHub App'}
+            </button>
+            {form.accountLogin && <span className="text-[11px] text-emerald-400">Authorized as {form.accountLogin}</span>}
+          </div>
+          <FieldErr msg={errors.transactionId} />
+        </div>
+      )}
+
+      <Divider label="Repository Scope" />
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void loadRepos()}
+          className="px-3 py-2 rounded-lg border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-sm text-chef-text transition-colors"
+        >
+          {loadingRepos ? 'Loading repositories…' : form.reposLoaded ? 'Refresh repositories' : 'Load repositories'}
+        </button>
+        {form.availableRepos.length > 0 && (
+          <span className="text-[11px] text-chef-muted">{form.availableRepos.length} repositories available</span>
+        )}
+      </div>
+      {authMessage && (
+        <div className={`text-[11px] ${authMessage.toLowerCase().includes('authorized') ? 'text-emerald-400' : 'text-amber-300'}`}>
+          {authMessage}
+        </div>
+      )}
+
+      {form.reposLoaded && (
+        <div className="space-y-3">
+          <FieldRow label="Search repositories">
+            <FInput value={form.repoSearch} onChange={v => ff('repoSearch', v)} placeholder="owner/repo" />
+          </FieldRow>
+          <div className="rounded-xl border border-chef-border overflow-hidden">
+            <div className="max-h-64 overflow-y-auto divide-y divide-chef-border">
+              {filteredRepos.map(repo => {
+                const checked = selectedSet.has(repo.fullName)
+                return (
+                  <label key={repo.id} className="flex items-center gap-3 px-3 py-2.5 text-sm text-chef-text hover:bg-chef-bg cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={event => {
+                        const next = event.target.checked
+                          ? [...form.selectedRepos, repo]
+                          : form.selectedRepos.filter(item => item.fullName !== repo.fullName)
+                        set({ ...form, selectedRepos: next })
+                      }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{repo.fullName}</div>
+                      <div className="text-[10px] text-chef-muted">{repo.ownerType} · {repo.visibility} · {repo.defaultBranch || 'default branch n/a'}</div>
+                    </div>
+                  </label>
+                )
+              })}
+              {filteredRepos.length === 0 && (
+                <div className="px-3 py-4 text-[11px] text-chef-muted">No repositories match the current search.</div>
+              )}
+            </div>
+          </div>
+          <FieldErr msg={errors.selectedRepos} />
+        </div>
+      )}
+
+      <Divider label="Defaults" />
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Default Resource">
+          <FSelect value={form.defaultResource} onChange={v => ff('defaultResource', v as GitHubForm['defaultResource'])}>
+            <option value="repos">repos</option>
+            <option value="pullRequests">pullRequests</option>
+            <option value="issues">issues</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Sync Interval">
+          <ScheduleSelect value={form.schedule} onChange={v => ff('schedule', v)} />
+        </FieldRow>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Pull Request State">
+          <FSelect value={form.pullRequestState} onChange={v => ff('pullRequestState', v as GitHubForm['pullRequestState'])}>
+            <option value="open">open</option>
+            <option value="closed">closed</option>
+            <option value="all">all</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Issue State">
+          <FSelect value={form.issueState} onChange={v => ff('issueState', v as GitHubForm['issueState'])}>
+            <option value="open">open</option>
+            <option value="closed">closed</option>
+            <option value="all">all</option>
+          </FSelect>
+        </FieldRow>
       </div>
     </div>
   )
@@ -1292,9 +2421,10 @@ function Stepper({ steps, current }: { steps: string[]; current: number }) {
 interface WizardProps {
   onClose: () => void
   onCreated: (conn: NewConnector, job: ConnectorJob) => void
+  initialDraft?: DiscoveryConnectorDraft | null
 }
 
-export default function ConnectorWizard({ onClose, onCreated }: WizardProps) {
+export default function ConnectorWizard({ onClose, onCreated, initialDraft = null }: WizardProps) {
   const [step, setStep] = useState(0)
   const [type, setType] = useState<ConnectorId | null>(null)
   const [touched, setTouched] = useState(false)
@@ -1305,11 +2435,237 @@ export default function ConnectorWizard({ onClose, onCreated }: WizardProps) {
   const [s3Form, setS3Form]           = useState<S3Form>(INIT_S3)
   const [sftpForm, setSftpForm]       = useState<SftpForm>(INIT_SFTP)
   const [bqForm, setBqForm]           = useState<BigQueryForm>(INIT_BQ)
+  const [redisForm, setRedisForm]     = useState<RedisForm>(INIT_REDIS)
   const [fileForm, setFileForm]       = useState<FileForm>({ name: '', description: '', file: null, fileName: '', fileSize: 0, format: '', parsedRows: [], detectedCols: [], parseError: '' })
   const [aiForm, setAiForm]           = useState<AppInsightsForm>(INIT_AI)
+  const [azureMonitorForm, setAzureMonitorForm] = useState<AzureMonitorForm>(INIT_AZURE_MONITOR)
+  const [elasticForm, setElasticForm] = useState<ElasticObservabilityForm>(INIT_ELASTIC)
+  const [datadogForm, setDatadogForm] = useState<DatadogForm>(INIT_DATADOG)
+  const [azureB2cForm, setAzureB2cForm] = useState<AzureB2CForm>(INIT_AZURE_B2C)
+  const [azureEntraIdForm, setAzureEntraIdForm] = useState<AzureEntraIdForm>(INIT_AZURE_ENTRA_ID)
+  const [githubForm, setGitHubForm] = useState<GitHubForm>(INIT_GITHUB)
 
   // Lazy-init secret on mount
   useEffect(() => { setWebhookForm(f => ({ ...f, secret: genSecret() })) }, [])
+
+  useEffect(() => {
+    if (!initialDraft) return
+
+    setTouched(false)
+    setType(initialDraft.type)
+    setStep(1)
+
+    if (initialDraft.type === 'postgresql') {
+      setDbForm({
+        ...makeInitDb('5432'),
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<DatabaseForm>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'mysql') {
+      setDbForm({
+        ...makeInitDb('3306'),
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<DatabaseForm>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'mongodb') {
+      setDbForm({
+        ...makeInitDb('27017'),
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<DatabaseForm>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'sftp') {
+      setSftpForm({
+        ...INIT_SFTP,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<SftpForm>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'redis') {
+      setRedisForm({
+        ...INIT_REDIS,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<RedisForm>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 's3') {
+      setS3Form({
+        ...INIT_S3,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<S3Form>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'http') {
+      setHttpForm({
+        ...INIT_HTTP,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<HttpForm>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'bigquery') {
+      setBqForm({
+        ...INIT_BQ,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<BigQueryForm>),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'appinsights') {
+      const creds = initialDraft.aiCredentials
+      setAiForm({
+        ...INIT_AI,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<AppInsightsForm>),
+        authMode: creds?.authMode === 'api_key' ? 'api_key' : 'entra_client_secret',
+        mode: creds?.mode === 'workspace' ? 'workspace' : 'appinsights',
+        appId: creds?.appId ?? '',
+        apiKey: creds?.apiKey ?? '',
+        workspaceId: creds?.workspaceId ?? '',
+        tenantId: creds?.tenantId ?? '',
+        clientId: creds?.clientId ?? '',
+        clientSecret: creds?.clientSecret ?? '',
+        connectionString: creds?.connectionString ?? '',
+      })
+      return
+    }
+
+    if (initialDraft.type === 'azuremonitor') {
+      const creds = initialDraft.observabilityCredentials as Partial<{
+        workspaceId: string
+        tenantId: string
+        clientId: string
+        clientSecret: string
+      }> | undefined
+      setAzureMonitorForm({
+        ...INIT_AZURE_MONITOR,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<AzureMonitorForm>),
+        workspaceId: creds?.workspaceId ?? String((initialDraft.runtimeConfig as Record<string, unknown> | undefined)?.workspaceId ?? ''),
+        tenantId: creds?.tenantId ?? '',
+        clientId: creds?.clientId ?? '',
+        clientSecret: creds?.clientSecret ?? '',
+      })
+      return
+    }
+
+    if (initialDraft.type === 'elasticsearch') {
+      const creds = initialDraft.observabilityCredentials as Partial<{
+        endpoint: string
+        authType: 'basic' | 'apikey'
+        username: string
+        password: string
+        apiKey: string
+        indexPattern: string
+      }> | undefined
+      setElasticForm({
+        ...INIT_ELASTIC,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<ElasticObservabilityForm>),
+        endpoint: creds?.endpoint ?? initialDraft.endpoint ?? '',
+        authType: creds?.authType === 'apikey' ? 'apikey' : 'basic',
+        username: creds?.username ?? '',
+        password: creds?.password ?? '',
+        apiKey: creds?.apiKey ?? '',
+        indexPattern: creds?.indexPattern ?? String((initialDraft.runtimeConfig as Record<string, unknown> | undefined)?.indexPattern ?? INIT_ELASTIC.indexPattern),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'datadog') {
+      const creds = initialDraft.observabilityCredentials as Partial<{
+        site: string
+        apiKey: string
+        applicationKey: string
+        source: 'logs' | 'events'
+        defaultQuery: string
+      }> | undefined
+      setDatadogForm({
+        ...INIT_DATADOG,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<DatadogForm>),
+        site: creds?.site ?? INIT_DATADOG.site,
+        apiKey: creds?.apiKey ?? '',
+        applicationKey: creds?.applicationKey ?? '',
+        source: creds?.source === 'events' ? 'events' : 'logs',
+        defaultQuery: creds?.defaultQuery ?? String((initialDraft.runtimeConfig as Record<string, unknown> | undefined)?.defaultQuery ?? INIT_DATADOG.defaultQuery),
+      })
+      return
+    }
+
+    if (initialDraft.type === 'azureb2c') {
+      const creds = initialDraft.azureB2cCredentials
+      setAzureB2cForm({
+        ...INIT_AZURE_B2C,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<AzureB2CForm>),
+        tenantId: creds?.tenantId ?? '',
+        clientId: creds?.clientId ?? '',
+        authMode: creds?.authMode === 'client_certificate' ? 'client_certificate' : 'client_secret',
+        clientSecret: creds?.clientSecret ?? '',
+        certificatePem: creds?.certificatePem ?? '',
+        privateKeyPem: creds?.privateKeyPem ?? '',
+        thumbprint: creds?.thumbprint ?? '',
+      })
+      return
+    }
+
+    if (initialDraft.type === 'azureentraid') {
+      const creds = initialDraft.azureEntraIdCredentials
+      setAzureEntraIdForm({
+        ...INIT_AZURE_ENTRA_ID,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<AzureEntraIdForm>),
+        tenantId: creds?.tenantId ?? '',
+        clientId: creds?.clientId ?? '',
+        authMode: creds?.authMode === 'client_certificate' ? 'client_certificate' : 'client_secret',
+        clientSecret: creds?.clientSecret ?? '',
+        certificatePem: creds?.certificatePem ?? '',
+        privateKeyPem: creds?.privateKeyPem ?? '',
+        thumbprint: creds?.thumbprint ?? '',
+      })
+      return
+    }
+
+    if (initialDraft.type === 'github') {
+      setGitHubForm({
+        ...INIT_GITHUB,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<GitHubForm>),
+      })
+    }
+  }, [initialDraft])
 
   const jobRef = useRef<ConnectorJob>({
     id: `job-${Date.now()}`, connectorId: '', connectorName: '', connectorType: 'http',
@@ -1328,11 +2684,18 @@ export default function ConnectorWizard({ onClose, onCreated }: WizardProps) {
       case 'http': return httpForm
       case 'webhook': return webhookForm
       case 'postgresql': case 'mysql': case 'mongodb': return dbForm
+      case 'redis': return redisForm
       case 's3': return s3Form
       case 'sftp': return sftpForm
       case 'bigquery': return bqForm
       case 'file': return fileForm
       case 'appinsights': return aiForm
+      case 'azuremonitor': return azureMonitorForm
+      case 'elasticsearch': return elasticForm
+      case 'datadog': return datadogForm
+      case 'azureb2c': return azureB2cForm
+      case 'azureentraid': return azureEntraIdForm
+      case 'github': return githubForm
       default: return httpForm
     }
   }
@@ -1343,11 +2706,18 @@ export default function ConnectorWizard({ onClose, onCreated }: WizardProps) {
       case 'http': return validateHttp(httpForm)
       case 'webhook': return validateWebhook(webhookForm)
       case 'postgresql': case 'mysql': case 'mongodb': return validateDatabase(dbForm, type)
+      case 'redis': return validateRedis(redisForm)
       case 's3': return validateS3(s3Form)
       case 'sftp': return validateSftp(sftpForm)
       case 'bigquery': return validateBigQuery(bqForm)
       case 'file': return validateFile(fileForm)
       case 'appinsights': return validateAppInsights(aiForm)
+      case 'azuremonitor': return validateAzureMonitor(azureMonitorForm)
+      case 'elasticsearch': return validateElastic(elasticForm)
+      case 'datadog': return validateDatadog(datadogForm)
+      case 'azureb2c': return validateAzureB2C(azureB2cForm)
+      case 'azureentraid': return validateAzureEntraId(azureEntraIdForm)
+      case 'github': return validateGitHub(githubForm)
       default: return {}
     }
   }
@@ -1404,38 +2774,228 @@ export default function ConnectorWizard({ onClose, onCreated }: WizardProps) {
     const f = currentForm() as unknown as Record<string, unknown>
     const name = String(f.name || 'New Connector')
     const ff = type === 'file' ? fileForm : null
+    const parsedAiConnection = type === 'appinsights'
+      ? parseAppInsightsConnectionString(aiForm.connectionString)
+      : { applicationId: '', instrumentationKey: '', ingestionEndpoint: '' }
+    const resolvedAiAppId = type === 'appinsights'
+      ? (aiForm.appId.trim() || parsedAiConnection.applicationId)
+      : ''
     const newConn: NewConnector = {
       id: `c-${Date.now()}`,
       name,
       type: type!,
+      ...(initialDraft?.candidateId ? { sourceDiscoveryId: initialDraft.candidateId } : {}),
+      ...(initialDraft?.existingConnectorId ? { existingConnectorId: initialDraft.existingConnectorId } : {}),
       endpoint: type === 'file'
         ? String(f.fileName || 'upload')
+        : type === 'github'
+        ? `github.com/${githubForm.selectedRepos[0]?.fullName ?? githubForm.accountLogin ?? 'selected-repos'}`
+        : type === 'redis'
+        ? redisForm.connectionMode === 'connectionString'
+          ? redisForm.connectionString
+          : `${redisForm.tls ? 'rediss' : 'redis'}://${redisForm.host}:${redisForm.port}/${redisForm.database || '0'}`
         : type === 'appinsights'
-        ? aiForm.mode === 'workspace'
+        ? aiForm.authMode === 'api_key'
+          ? `api.applicationinsights.io/v1/apps/${resolvedAiAppId.slice(0, 8)}…`
+          : aiForm.mode === 'workspace'
           ? `api.loganalytics.azure.com/v1/workspaces/${aiForm.workspaceId.slice(0, 8)}…`
-          : `api.applicationinsights.io/v1/apps/${aiForm.appId.slice(0, 8)}…`
+          : `api.applicationinsights.io/v1/apps/${resolvedAiAppId.slice(0, 8)}…`
+        : type === 'azuremonitor'
+        ? `api.loganalytics.azure.com/v1/workspaces/${azureMonitorForm.workspaceId.slice(0, 8)}…`
+        : type === 'elasticsearch'
+        ? elasticForm.endpoint
+        : type === 'datadog'
+        ? `api.${datadogForm.site}/${datadogForm.source}`
+        : type === 'azureb2c'
+        ? `graph.microsoft.com/${azureB2cForm.resource}`
+        : type === 'azureentraid'
+        ? `graph.microsoft.com/${azureEntraIdForm.resource}`
         : String(f.url || f.host || f.bucket || f.project || (type === 'webhook' ? `wh://${genSlug(name)}` : '')),
       authMethod: String(
         type === 'webhook'    ? 'HMAC-SHA256' :
         type === 'http'       ? (f.auth || 'None') :
         type === 'file'       ? 'Direct upload' :
-        type === 'appinsights'? 'OAuth2 client_credentials' :
+        type === 'github'     ? (githubForm.authMode === 'pat' ? 'Personal access token' : githubForm.authMode === 'oauth' ? 'GitHub OAuth' : 'GitHub App installation') :
+        type === 'redis'      ? 'Redis auth' :
+        type === 'appinsights'? (aiForm.authMode === 'api_key' ? 'App Insights API key' : 'OAuth2 client_credentials') :
+        type === 'azuremonitor' ? 'OAuth2 client_credentials' :
+        type === 'elasticsearch' ? (elasticForm.authType === 'apikey' ? 'API key' : 'Basic auth') :
+        type === 'datadog' ? 'API key + application key' :
+        type === 'azureb2c'   ? (azureB2cForm.authMode === 'client_certificate' ? 'OAuth2 client_credentials + certificate' : 'OAuth2 client_credentials + secret') :
+        type === 'azureentraid' ? (azureEntraIdForm.authMode === 'client_certificate' ? 'OAuth2 client_credentials + certificate' : 'OAuth2 client_credentials + secret') :
         (type === 'postgresql' || type === 'mysql' || type === 'mongodb') ? (f.ssl ? 'TLS + password' : 'password') :
         type === 'sftp'       ? (f.authType === 'privatekey' ? 'SSH private key' : 'password') :
         type === 'bigquery'   ? 'Service account' :
         f.auth || f.authType || 'N/A'
       ),
-      syncInterval: String(f.schedule || (type === 'webhook' ? 'real-time' : type === 'file' ? 'manual' : type === 'appinsights' ? 'on-demand' : 'manual')),
+      syncInterval: String(f.schedule || (type === 'webhook' ? 'real-time' : type === 'file' ? 'manual' : type === 'github' ? githubForm.schedule : type === 'appinsights' || type === 'azuremonitor' ? 'on-demand' : type === 'azureb2c' ? azureB2cForm.schedule : type === 'azureentraid' ? azureEntraIdForm.schedule : 'manual')),
       description: String(f.description || (
         ff ? `${String(ff.format).toUpperCase()} · ${ff.parsedRows.length.toLocaleString()} rows · ${ff.detectedCols.length} columns` :
-        type === 'appinsights'
-          ? aiForm.mode === 'workspace'
+        type === 'github'
+          ? `GitHub ${githubForm.defaultResource} · ${githubForm.selectedRepos.length} selected repos`
+        :
+        type === 'redis'
+          ? `Redis · ${redisForm.defaultQueryMode} · ${redisForm.defaultKeyPattern || '*'}`
+        : type === 'appinsights'
+          ? aiForm.authMode === 'api_key'
+            ? `App Insights API key · app: ${resolvedAiAppId.slice(0, 8)}…`
+            : aiForm.mode === 'workspace'
             ? `Azure Monitor · workspace: ${aiForm.workspaceId.slice(0, 8)}…`
-            : `Azure App Insights · app: ${aiForm.appId.slice(0, 8)}…`
+            : `Azure App Insights · app: ${resolvedAiAppId.slice(0, 8)}…`
+          : type === 'azuremonitor'
+            ? `Azure Monitor · workspace: ${azureMonitorForm.workspaceId.slice(0, 8)}…`
+          : type === 'elasticsearch'
+            ? `Observability logs · ${elasticForm.indexPattern}`
+          : type === 'datadog'
+            ? `Datadog ${datadogForm.source} · ${datadogForm.site}`
+          : type === 'azureb2c'
+            ? `Azure AD B2C · default resource: ${azureB2cForm.resource}`
+          : type === 'azureentraid'
+            ? `Azure Entra ID · default resource: ${azureEntraIdForm.resource}`
           : ''
       )),
-      runtimeConfig: { ...(currentForm() as unknown as Record<string, unknown>) },
-      ...(type === 'appinsights' ? { aiCredentials: { mode: aiForm.mode, appId: aiForm.appId, workspaceId: aiForm.workspaceId, tenantId: aiForm.tenantId, clientId: aiForm.clientId, clientSecret: aiForm.clientSecret } } : {}),
+      runtimeConfig: type === 'redis'
+        ? {
+            connectionMode: redisForm.connectionMode,
+            connectionString: redisForm.connectionString,
+            host: redisForm.host,
+            port: Number(redisForm.port || 6379),
+            username: redisForm.username,
+            password: redisForm.password,
+            database: Number(redisForm.database || 0),
+            tls: redisForm.tls,
+            defaultQueryMode: redisForm.defaultQueryMode,
+            defaultValueType: redisForm.defaultValueType,
+            defaultKeyPattern: redisForm.defaultKeyPattern,
+            defaultSearchIndex: redisForm.defaultSearchIndex,
+            schedule: redisForm.schedule,
+          }
+        : type === 'azureb2c'
+        ? {
+            resource: azureB2cForm.resource,
+            schedule: azureB2cForm.schedule,
+            authMode: azureB2cForm.authMode,
+          }
+        : type === 'azureentraid'
+        ? {
+            resource: azureEntraIdForm.resource,
+            schedule: azureEntraIdForm.schedule,
+            authMode: azureEntraIdForm.authMode,
+          }
+        : type === 'azuremonitor'
+        ? {
+            defaultQuery: azureMonitorForm.defaultQuery,
+            workspaceId: azureMonitorForm.workspaceId,
+            provider: 'azuremonitor',
+          }
+        : type === 'github'
+        ? {
+            selectedRepos: githubForm.selectedRepos.map(repo => ({
+              owner: repo.owner,
+              repo: repo.repo,
+              fullName: repo.fullName,
+              private: repo.private,
+              ownerType: repo.ownerType,
+            })),
+            defaultResource: githubForm.defaultResource,
+            pullRequestState: githubForm.pullRequestState,
+            issueState: githubForm.issueState,
+            schedule: githubForm.schedule,
+          }
+        : type === 'elasticsearch'
+        ? {
+            defaultQuery: elasticForm.defaultQuery,
+            indexPattern: elasticForm.indexPattern,
+            provider: 'elasticsearch',
+          }
+        : type === 'datadog'
+        ? {
+            defaultQuery: datadogForm.defaultQuery,
+            source: datadogForm.source,
+            site: datadogForm.site,
+            provider: 'datadog',
+          }
+        : type === 'appinsights'
+        ? {
+            authMode: aiForm.authMode,
+            mode: aiForm.mode,
+            appId: resolvedAiAppId,
+            workspaceId: aiForm.workspaceId,
+          }
+        : { ...(currentForm() as unknown as Record<string, unknown>) },
+      ...(type === 'appinsights' ? { aiCredentials: {
+        authMode: aiForm.authMode,
+        mode: aiForm.mode,
+        appId: resolvedAiAppId,
+        apiKey: aiForm.apiKey,
+        workspaceId: aiForm.workspaceId,
+        tenantId: aiForm.tenantId,
+        clientId: aiForm.clientId,
+        clientSecret: aiForm.clientSecret,
+        connectionString: aiForm.connectionString,
+      } } : {}),
+      ...(type === 'appinsights' ? { observabilityCredentials: {
+        provider: 'appinsights',
+        authMode: aiForm.authMode,
+        mode: aiForm.mode,
+        appId: resolvedAiAppId,
+        apiKey: aiForm.apiKey,
+        workspaceId: aiForm.workspaceId,
+        tenantId: aiForm.tenantId,
+        clientId: aiForm.clientId,
+        clientSecret: aiForm.clientSecret,
+        connectionString: aiForm.connectionString,
+      } } : {}),
+      ...(type === 'azuremonitor' ? { observabilityCredentials: {
+        provider: 'azuremonitor',
+        workspaceId: azureMonitorForm.workspaceId,
+        tenantId: azureMonitorForm.tenantId,
+        clientId: azureMonitorForm.clientId,
+        clientSecret: azureMonitorForm.clientSecret,
+      } } : {}),
+      ...(type === 'elasticsearch' ? { observabilityCredentials: {
+        provider: 'elasticsearch',
+        endpoint: elasticForm.endpoint,
+        authType: elasticForm.authType,
+        username: elasticForm.username,
+        password: elasticForm.password,
+        apiKey: elasticForm.apiKey,
+        indexPattern: elasticForm.indexPattern,
+      } } : {}),
+      ...(type === 'datadog' ? { observabilityCredentials: {
+        provider: 'datadog',
+        site: datadogForm.site,
+        apiKey: datadogForm.apiKey,
+        applicationKey: datadogForm.applicationKey,
+        source: datadogForm.source,
+        defaultQuery: datadogForm.defaultQuery,
+      } } : {}),
+      ...(type === 'azureb2c' ? { azureB2cCredentials: {
+        tenantId: azureB2cForm.tenantId,
+        clientId: azureB2cForm.clientId,
+        authMode: azureB2cForm.authMode,
+        clientSecret: azureB2cForm.clientSecret,
+        certificatePem: azureB2cForm.certificatePem,
+        privateKeyPem: azureB2cForm.privateKeyPem,
+        thumbprint: azureB2cForm.thumbprint,
+        cloud: 'global' as const,
+      } } : {}),
+      ...(type === 'azureentraid' ? { azureEntraIdCredentials: {
+        tenantId: azureEntraIdForm.tenantId,
+        clientId: azureEntraIdForm.clientId,
+        authMode: azureEntraIdForm.authMode,
+        clientSecret: azureEntraIdForm.clientSecret,
+        certificatePem: azureEntraIdForm.certificatePem,
+        privateKeyPem: azureEntraIdForm.privateKeyPem,
+        thumbprint: azureEntraIdForm.thumbprint,
+        cloud: 'global' as const,
+      } } : {}),
+      ...(type === 'github' && githubForm.authMode === 'pat' ? { githubCredentials: {
+        mode: 'pat' as const,
+        token: githubForm.token,
+        username: githubForm.accountLogin || undefined,
+      } } : {}),
+      ...(type === 'github' && githubForm.authMode !== 'pat' ? { githubAuthTransactionId: githubForm.transactionId } : {}),
     }
     const finalJob: ConnectorJob = {
       ...jobRef.current,
@@ -1471,11 +3031,18 @@ export default function ConnectorWizard({ onClose, onCreated }: WizardProps) {
           {step === 1 && type === 'http' && <HttpConfigure form={httpForm} set={setHttpForm} errors={errors} />}
           {step === 1 && type === 'webhook' && <WebhookConfigure form={webhookForm} set={setWebhookForm} errors={errors} />}
           {step === 1 && (type === 'postgresql' || type === 'mysql' || type === 'mongodb') && <DatabaseConfigure form={dbForm} set={setDbForm} errors={errors} type={type} />}
+          {step === 1 && type === 'redis' && <RedisConfigure form={redisForm} set={setRedisForm} errors={errors} />}
           {step === 1 && type === 's3' && <S3Configure form={s3Form} set={setS3Form} errors={errors} />}
           {step === 1 && type === 'sftp' && <SftpConfigure form={sftpForm} set={setSftpForm} errors={errors} />}
           {step === 1 && type === 'bigquery' && <BigQueryConfigure form={bqForm} set={setBqForm} errors={errors} />}
           {step === 1 && type === 'file' && <FileUploadConfigure form={fileForm} set={setFileForm} errors={errors} />}
           {step === 1 && type === 'appinsights' && <AppInsightsConfigure form={aiForm} set={setAiForm} errors={errors} />}
+          {step === 1 && type === 'azuremonitor' && <AzureMonitorConfigure form={azureMonitorForm} set={setAzureMonitorForm} errors={errors} />}
+          {step === 1 && type === 'elasticsearch' && <ElasticObservabilityConfigure form={elasticForm} set={setElasticForm} errors={errors} />}
+          {step === 1 && type === 'datadog' && <DatadogConfigure form={datadogForm} set={setDatadogForm} errors={errors} />}
+          {step === 1 && type === 'azureb2c' && <AzureB2CConfigure form={azureB2cForm} set={setAzureB2cForm} errors={errors} />}
+          {step === 1 && type === 'azureentraid' && <AzureEntraIdConfigure form={azureEntraIdForm} set={setAzureEntraIdForm} errors={errors} />}
+          {step === 1 && type === 'github' && <GitHubConfigure form={githubForm} set={setGitHubForm} errors={errors} />}
           {isTest && type && (
             <TestStep
               type={type}

@@ -6,47 +6,48 @@
 :root {
   --font-inter: 'Inter', system-ui, sans-serif;
   --font-mono:  'JetBrains Mono', 'Menlo', monospace;
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
 }
 
 /* ── Dark theme (default) ────────────────────────────────────────────────────── */
 :root {
-  --chef-bg:           8 9 14;
-  --chef-surface:      13 17 23;
-  --chef-card:         17 24 39;
-  --chef-card-hover:   22 31 48;
-  --chef-border:       30 41 59;
-  --chef-border-dim:   15 23 42;
-  --chef-text:         226 232 240;
-  --chef-text-dim:     203 213 225;
-  --chef-muted:        100 116 139;
-  --chef-muted-bright: 148 163 184;
-  --scrollbar-thumb:  #1e293b;
-  --scrollbar-hover:  #334155;
-  --dot-color:        #1e293b;
-  --shimmer-a:        #1e293b;
-  --shimmer-b:        #243048;
-  --selection-bg:     rgba(99,102,241,0.30);
+  --chef-bg:           7 10 13;
+  --chef-surface:      12 18 22;
+  --chef-card:         18 27 33;
+  --chef-card-hover:   24 35 43;
+  --chef-border:       38 55 64;
+  --chef-border-dim:   20 29 35;
+  --chef-text:         233 241 245;
+  --chef-text-dim:     206 219 226;
+  --chef-muted:        118 140 151;
+  --chef-muted-bright: 157 182 195;
+  --scrollbar-thumb:  #21343d;
+  --scrollbar-hover:  #2d4754;
+  --dot-color:        #17303a;
+  --shimmer-a:        #18313a;
+  --shimmer-b:        #224654;
+  --selection-bg:     rgba(38, 176, 226, 0.28);
   --selection-fg:     #e2e8f0;
 }
 
 /* ── Light theme ─────────────────────────────────────────────────────────────── */
 .light {
-  --chef-bg:           248 250 252;
+  --chef-bg:           244 249 251;
   --chef-surface:      255 255 255;
-  --chef-card:         241 245 249;
-  --chef-card-hover:   226 232 240;
-  --chef-border:       226 232 240;
-  --chef-border-dim:   241 245 249;
-  --chef-text:         15 23 42;
-  --chef-text-dim:     30 41 59;
-  --chef-muted:        100 116 139;
-  --chef-muted-bright: 71 85 105;
-  --scrollbar-thumb:  #cbd5e1;
-  --scrollbar-hover:  #94a3b8;
-  --dot-color:        #e2e8f0;
-  --shimmer-a:        #e2e8f0;
-  --shimmer-b:        #f1f5f9;
-  --selection-bg:     rgba(99,102,241,0.20);
+  --chef-card:         236 244 247;
+  --chef-card-hover:   223 236 241;
+  --chef-border:       211 225 231;
+  --chef-border-dim:   235 243 246;
+  --chef-text:         11 27 35;
+  --chef-text-dim:     24 47 58;
+  --chef-muted:        88 112 124;
+  --chef-muted-bright: 54 77 88;
+  --scrollbar-thumb:  #bed1d9;
+  --scrollbar-hover:  #8eacb8;
+  --dot-color:        #d7e6ec;
+  --shimmer-a:        #dcebf0;
+  --shimmer-b:        #edf6f8;
+  --selection-bg:     rgba(38, 176, 226, 0.18);
   --selection-fg:     #0f172a;
 }
 
@@ -59,6 +60,16 @@ html, body {
   color: rgb(var(--chef-text));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-image:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.1), transparent 22rem),
+    radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.08), transparent 24rem);
+}
+
+.font-display {
+  font-family: var(--font-display);
 }
 
 ::-webkit-scrollbar       { width: 6px; height: 6px; }

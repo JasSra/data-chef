@@ -6,10 +6,12 @@ import {
   Clock, Settings, AlertTriangle, CheckCircle2,
   Zap, Lock, ExternalLink, Terminal, Activity,
   Play, X, Loader2, AlertCircle, HardDrive,
-  RefreshCw, ChevronRight, Copy, FileText, BarChart2,
+  RefreshCw, ChevronRight, Copy, FileText, BarChart2, Users, Radar, EyeOff, Undo2,
+  Download, Upload,
 } from 'lucide-react'
 import StatusBadge from '@/components/StatusBadge'
-import ConnectorWizard, { ConnectorJob, NewConnector, ConnectorId } from '@/components/ConnectorWizard'
+import ConnectorWizard, { ConnectorJob, NewConnector, ConnectorId, DiscoveryConnectorDraft } from '@/components/ConnectorWizard'
+import BrandIcon from '@/components/BrandIcon'
 
 /* ── Types ───────────────────────────────────────────────────────── */
 type ConnStatus = 'connected' | 'disconnected' | 'running'
@@ -21,18 +23,48 @@ interface Connection {
   syncInterval: string; latencyMs: number; sparkValues: number[]
 }
 
+interface DiscoveryCandidate {
+  id: string
+  type: Extract<ConnectorId, 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 's3' | 'sftp' | 'elasticsearch'>
+  host: string
+  port: number
+  displayName: string
+  confidence: number
+  matchReason: string
+  status: 'new' | 'dismissed' | 'added'
+  lastSeenAt: number
+  lastSeen: string
+  connectorId?: string | null
+}
+
+interface DiscoveryOverview {
+  enabled: boolean
+  running: boolean
+  lastScanAt: number | null
+  lastScan: string
+  lastScanDurationMs: number | null
+  candidates: DiscoveryCandidate[]
+}
+
 /* ── Type config ─────────────────────────────────────────────────── */
-const TYPE_CFG: Record<ConnectorId, { Icon: React.ElementType; color: string; bg: string; border: string; label: string }> = {
+const TYPE_CFG: Record<ConnectorId, { Icon?: React.ElementType; brandClass?: string; color: string; bg: string; border: string; label: string }> = {
   http:       { Icon: Globe,     color: 'text-sky-400',     bg: 'bg-sky-500/10',     border: 'border-sky-500/20',    label: 'HTTP API' },
+  github:     { brandClass: 'fa-brands fa-github', color: 'text-zinc-200', bg: 'bg-zinc-500/10', border: 'border-zinc-500/20', label: 'GitHub' },
   webhook:    { Icon: Webhook,   color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/20',  label: 'Webhook' },
   s3:         { Icon: Cloud,     color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/20', label: 'S3' },
   sftp:       { Icon: Server,    color: 'text-slate-400',   bg: 'bg-slate-500/10',   border: 'border-slate-500/20',  label: 'SFTP' },
   postgresql: { Icon: Database,  color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/20',   label: 'PostgreSQL' },
   mysql:      { Icon: Database,  color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/20', label: 'MySQL' },
   mongodb:    { Icon: Database,  color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', label: 'MongoDB' },
-  bigquery:   { Icon: HardDrive, color: 'text-rose-400',    bg: 'bg-rose-500/10',    border: 'border-rose-500/20',   label: 'BigQuery' },
-  file:        { Icon: FileText,  color: 'text-lime-400',    bg: 'bg-lime-500/10',    border: 'border-lime-500/20',    label: 'File Upload' },
-  appinsights: { Icon: BarChart2, color: 'text-cyan-400',    bg: 'bg-cyan-500/10',    border: 'border-cyan-500/20',    label: 'App Insights' },
+  redis:      { Icon: Database,  color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20', label: 'Redis' },
+  bigquery:   { brandClass: 'fa-brands fa-google', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20', label: 'BigQuery' },
+  file:       { Icon: FileText,  color: 'text-lime-400',    bg: 'bg-lime-500/10',    border: 'border-lime-500/20',    label: 'File Upload' },
+  appinsights:{ brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', label: 'App Insights' },
+  azuremonitor:{ brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-300', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', label: 'Azure Monitor' },
+  elasticsearch:{ Icon: Database, color: 'text-amber-300', bg: 'bg-amber-500/10', border: 'border-amber-500/20', label: 'Elasticsearch / OpenSearch' },
+  datadog:    { Icon: Activity,  color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-500/20', label: 'Datadog' },
+  azureb2c:   { brandClass: 'fa-brands fa-microsoft', color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/20', label: 'Azure AD B2C' },
+  azureentraid:{ brandClass: 'fa-brands fa-microsoft', color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/20', label: 'Azure Entra ID' },
 }
 
 /* ── Sparkline (values = last N record counts from real sync history) */
@@ -45,10 +77,15 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 }
 
 const SPARK_COLORS: Record<ConnectorId, string> = {
-  http: '#38bdf8', webhook: '#fbbf24', s3: '#a78bfa', sftp: '#94a3b8',
-  postgresql: '#60a5fa', mysql: '#fb923c', mongodb: '#34d399', bigquery: '#fb7185',
+  http: '#38bdf8', github: '#d4d4d8', webhook: '#fbbf24', s3: '#a78bfa', sftp: '#94a3b8',
+  postgresql: '#60a5fa', mysql: '#fb923c', mongodb: '#34d399', redis: '#f87171', bigquery: '#fb7185',
   file:        '#a3e635',
   appinsights: '#22d3ee',
+  azuremonitor:'#67e8f9',
+  elasticsearch:'#fbbf24',
+  datadog:     '#fdba74',
+  azureb2c:    '#2dd4bf',
+  azureentraid:'#7dd3fc',
 }
 
 /* ── Connection Card ─────────────────────────────────────────────── */
@@ -56,7 +93,6 @@ function ConnCard({ conn, selected, onClick, onSync }: {
   conn: Connection; selected: boolean; onClick: () => void; onSync: () => void
 }) {
   const tc = TYPE_CFG[conn.type]
-  const Icon = tc.Icon
   return (
     <div
       onClick={onClick}
@@ -64,7 +100,7 @@ function ConnCard({ conn, selected, onClick, onSync }: {
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className={`w-9 h-9 rounded-xl ${tc.bg} ${tc.border} border flex items-center justify-center shrink-0`}>
-          <Icon size={18} className={tc.color} />
+          <BrandIcon icon={tc.Icon} brandClass={tc.brandClass} size={18} className={tc.color} />
         </div>
         <StatusBadge status={conn.status === 'running' ? 'running' : conn.status === 'connected' ? 'connected' : 'disconnected'} />
       </div>
@@ -98,6 +134,76 @@ function ConnCard({ conn, selected, onClick, onSync }: {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+function DiscoveryCard({
+  candidate,
+  onAdd,
+  onDismiss,
+  onRestore,
+}: {
+  candidate: DiscoveryCandidate
+  onAdd: () => void
+  onDismiss: () => void
+  onRestore: () => void
+}) {
+  const tc = TYPE_CFG[candidate.type]
+  const Icon = tc.Icon
+
+  return (
+    <div className={`rounded-xl border p-4 ${candidate.status === 'dismissed' ? 'border-chef-border/70 bg-chef-bg/60 opacity-80' : 'border-chef-border bg-chef-card'}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className={`w-10 h-10 rounded-xl ${tc.bg} ${tc.border} border flex items-center justify-center shrink-0`}>
+            <BrandIcon icon={Icon} brandClass={tc.brandClass} size={18} className={tc.color} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-chef-text truncate">{candidate.displayName}</div>
+            <div className={`text-[10px] font-mono mt-0.5 ${tc.color}`}>{tc.label}</div>
+          </div>
+        </div>
+        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${candidate.confidence >= 0.9 ? 'bg-emerald-500/10 text-emerald-300' : candidate.confidence >= 0.75 ? 'bg-sky-500/10 text-sky-300' : 'bg-amber-500/10 text-amber-300'}`}>
+          {Math.round(candidate.confidence * 100)}%
+        </span>
+      </div>
+
+      <div className="mt-3 text-[11px] leading-relaxed text-chef-muted">
+        {candidate.matchReason}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2 text-[10px] text-chef-muted">
+        <Clock size={10} />
+        <span>{candidate.lastSeen}</span>
+        <span className="font-mono">{candidate.host}:{candidate.port}</span>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {candidate.status === 'dismissed' ? (
+          <button
+            onClick={onRestore}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-3 py-1.5 text-[11px] text-chef-text hover:border-indigo-500/20 hover:bg-chef-bg transition-colors"
+          >
+            <Undo2 size={11} /> Restore
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={onAdd}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-500 transition-colors"
+            >
+              <Plus size={11} /> Add connector
+            </button>
+            <button
+              onClick={onDismiss}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-3 py-1.5 text-[11px] text-chef-muted hover:text-chef-text hover:border-indigo-500/20 transition-colors"
+            >
+              <EyeOff size={11} /> Dismiss
+            </button>
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -201,11 +307,17 @@ function JobsPanel({ jobs, onClose }: { jobs: ConnectorJob[]; onClose: () => voi
 }
 
 /* ── Detail Panel ────────────────────────────────────────────────── */
-function DetailPanel({ conn, onToggle, onSync, onClose }: {
-  conn: Connection; onToggle: () => void; onSync: () => void; onClose: () => void
+function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit, onClose }: {
+  conn: Connection
+  onToggle: () => void
+  onSync: () => void
+  onExport: () => void
+  onCopy: () => void
+  onClone: () => void
+  onEdit: () => void
+  onClose: () => void
 }) {
   const tc = TYPE_CFG[conn.type]
-  const Icon = tc.Icon
   const [copied, setCopied] = useState(false)
   function copy() { navigator.clipboard.writeText(conn.endpoint).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 2000) }
 
@@ -215,7 +327,7 @@ function DetailPanel({ conn, onToggle, onSync, onClose }: {
       <div className="px-5 py-4 border-b border-chef-border shrink-0">
         <div className="flex items-start gap-3">
           <div className={`w-11 h-11 rounded-xl ${tc.bg} ${tc.border} border flex items-center justify-center shrink-0`}>
-            <Icon size={22} className={tc.color} />
+            <BrandIcon icon={tc.Icon} brandClass={tc.brandClass} size={22} className={tc.color} />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -225,7 +337,19 @@ function DetailPanel({ conn, onToggle, onSync, onClose }: {
             <div className={`text-xs font-mono mt-0.5 ${tc.color}`}>{tc.label}</div>
             <div className="text-xs text-chef-muted mt-0.5 leading-snug">{conn.description}</div>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center justify-end gap-1.5 shrink-0 flex-wrap max-w-[220px]">
+            <button onClick={onExport} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 hover:bg-chef-card transition-colors">
+              <Download size={12} /> Export
+            </button>
+            <button onClick={onCopy} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 hover:bg-chef-card transition-colors">
+              <Copy size={12} /> Copy JSON
+            </button>
+            <button onClick={onClone} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 hover:bg-chef-card transition-colors">
+              <Plus size={12} /> Clone
+            </button>
+            <button onClick={onEdit} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 hover:bg-chef-card transition-colors">
+              <Settings size={12} /> Edit
+            </button>
             {conn.status === 'connected' && (
               <button onClick={onSync} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors">
                 <RefreshCw size={12} /> Sync
@@ -296,6 +420,15 @@ function DetailPanel({ conn, onToggle, onSync, onClose }: {
           {(conn.type === 'sftp' && conn.endpoint.startsWith('ftp://')) && (
             <div className="flex items-center gap-2"><AlertTriangle size={11} className="text-amber-400 shrink-0" /><span>FTP is unencrypted — migrate to SFTP</span></div>
           )}
+          {conn.type === 'azureb2c' && (
+            <>
+              <div className="flex items-start gap-2"><AlertTriangle size={11} className="text-amber-400 shrink-0 mt-0.5" /><span>Azure AD B2C is unavailable for new customers after May 1, 2025. This connector is intended for existing tenants.</span></div>
+              <div className="flex items-start gap-2"><AlertTriangle size={11} className="text-sky-400 shrink-0 mt-0.5" /><span><span className="font-medium text-sky-300">Beta endpoints:</span> <code className="bg-chef-card px-1 rounded">userFlows</code> and <code className="bg-chef-card px-1 rounded">customPolicies</code> use Microsoft Graph beta APIs; <code className="bg-chef-card px-1 rounded">users</code> stays on Graph v1.0.</span></div>
+            </>
+          )}
+          {conn.type === 'azureentraid' && (
+            <div className="flex items-start gap-2"><CheckCircle2 size={11} className="text-sky-400 shrink-0 mt-0.5" /><span>Azure Entra ID resources use Microsoft Graph v1.0 for <code className="bg-chef-card px-1 rounded">users</code>, <code className="bg-chef-card px-1 rounded">groups</code>, and <code className="bg-chef-card px-1 rounded">applications</code>.</span></div>
+          )}
         </div>
       </div>
     </div>
@@ -308,24 +441,216 @@ type FilterType = ConnectorId | 'all'
 export default function ConnectionsPage() {
   const [conns, setConns] = useState<Connection[]>([])
   const [loading, setLoading] = useState(true)
+  const [discovery, setDiscovery] = useState<DiscoveryOverview | null>(null)
+  const [discoveryLoading, setDiscoveryLoading] = useState(true)
+  const [showDismissedDiscovery, setShowDismissedDiscovery] = useState(false)
+  const [wizardDraft, setWizardDraft] = useState<DiscoveryConnectorDraft | null>(null)
   const [selected, setSelected] = useState<Connection | null>(null)
   const [filter, setFilter] = useState<FilterType>('all')
   const [showWizard, setShowWizard] = useState(false)
   const [jobs, setJobs] = useState<ConnectorJob[]>([])
   const [showJobs, setShowJobs] = useState(false)
+  const [transferNotice, setTransferNotice] = useState<{ tone: 'success' | 'error'; msg: string } | null>(null)
+  const importRef = useRef<HTMLInputElement>(null)
+
+  const showNotice = useCallback((tone: 'success' | 'error', msg: string) => {
+    setTransferNotice({ tone, msg })
+  }, [])
+
+  const loadConnectors = useCallback(async () => {
+    try {
+      const res = await fetch('/api/connectors')
+      const data = await res.json() as Connection[]
+      setConns(data)
+      setSelected(prev => prev ? data.find(conn => conn.id === prev.id) ?? null : null)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const loadDiscovery = useCallback(async (includeDismissed = true) => {
+    try {
+      const res = await fetch(`/api/discovery?includeDismissed=${includeDismissed ? 'true' : 'false'}`, { cache: 'no-store' })
+      const data = await res.json() as DiscoveryOverview
+      setDiscovery(data)
+    } finally {
+      setDiscoveryLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    fetch('/api/connectors')
-      .then(r => r.json())
-      .then((data: Connection[]) => { setConns(data); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [])
+    void loadConnectors()
+    void loadDiscovery()
+  }, [loadConnectors, loadDiscovery])
+
+  useEffect(() => {
+    if (!transferNotice) return
+    const timer = window.setTimeout(() => setTransferNotice(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [transferNotice])
 
   const connectedCount = conns.filter(c => c.status === 'connected').length
   const runningJobs = jobs.filter(j => j.status === 'running').length
+  const activeDiscovery = (discovery?.candidates ?? []).filter(candidate => candidate.status !== 'dismissed')
+  const dismissedDiscovery = (discovery?.candidates ?? []).filter(candidate => candidate.status === 'dismissed')
 
   const filtered = filter === 'all' ? conns : conns.filter(c => c.type === filter)
   const filterTypes: FilterType[] = ['all', ...Array.from(new Set(conns.map(c => c.type)))]
+
+  function downloadJsonFile(filename: string, payload: unknown) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function fetchTransferPayload(ids?: string[]) {
+    const query = ids && ids.length > 0
+      ? `?${ids.map(id => `id=${encodeURIComponent(id)}`).join('&')}`
+      : ''
+    const res = await fetch(`/api/connectors/transfer${query}`)
+    if (!res.ok) throw new Error('Export request failed')
+    return res.json()
+  }
+
+  async function importConfigPayload(payload: unknown, successMessage?: string) {
+    try {
+      const res = await fetch('/api/connectors/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Import failed')
+      await loadConnectors()
+      if (Array.isArray(data.connectors) && data.connectors.length > 0) {
+        setSelected(data.connectors[0] as Connection)
+      }
+      showNotice('success', successMessage ?? `Imported ${data.imported} connector${data.imported === 1 ? '' : 's'}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Import failed'
+      showNotice('error', msg)
+    }
+  }
+
+  async function exportConfig(ids?: string[]) {
+    try {
+      const data = await fetchTransferPayload(ids)
+      const suffix = ids && ids.length === 1 && selected
+        ? selected.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'connector'
+        : 'all-connectors'
+      downloadJsonFile(`datachef-connectors-${suffix}.json`, data)
+      showNotice('success', ids?.length === 1 ? 'Connector exported as JSON' : 'Connector bundle exported as JSON')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Export failed'
+      showNotice('error', msg)
+    }
+  }
+
+  async function copyConfigToClipboard(ids?: string[]) {
+    try {
+      const data = await fetchTransferPayload(ids)
+      await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+      showNotice('success', ids?.length === 1 ? 'Connector JSON copied to clipboard' : 'Connector bundle copied to clipboard')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Clipboard copy failed'
+      showNotice('error', msg)
+    }
+  }
+
+  async function pasteConfigFromClipboard() {
+    try {
+      const raw = await navigator.clipboard.readText()
+      if (!raw.trim()) throw new Error('Clipboard is empty')
+      await importConfigPayload(JSON.parse(raw))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Clipboard import failed'
+      showNotice('error', msg)
+    }
+  }
+
+  async function importConfig(file: File) {
+    try {
+      const raw = await file.text()
+      await importConfigPayload(JSON.parse(raw))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Import failed'
+      showNotice('error', msg)
+    }
+  }
+
+async function cloneConnector(conn: Connection) {
+    const nextName = window.prompt('Clone connector as', `${conn.name} Copy`)
+    if (!nextName?.trim()) return
+
+    try {
+      const payload = await fetchTransferPayload([conn.id]) as { version?: number; connectors?: Array<Record<string, unknown>> }
+      const source = payload.connectors?.[0]
+      if (!source) throw new Error('Connector export payload was empty')
+
+      const clone = {
+        ...source,
+        id: undefined,
+        name: nextName.trim(),
+        datasets: [],
+        syncHistory: [],
+        recordsRaw: 0,
+        latencyMs: 0,
+        lastSyncAt: null,
+        lastRunAt: null,
+        lastError: null,
+      }
+
+      await importConfigPayload({
+        version: payload.version ?? 1,
+        connectors: [clone],
+      }, `Cloned connector as "${nextName.trim()}"`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Clone failed'
+      showNotice('error', msg)
+  }
+}
+
+  async function editConnector(conn: Connection) {
+    try {
+      const payload = await fetchTransferPayload([conn.id]) as {
+        connectors?: Array<{
+          id?: string
+          type: ConnectorId
+          name: string
+          description?: string
+          endpoint?: string
+          runtimeConfig?: Record<string, unknown>
+          aiCredentials?: NewConnector['aiCredentials']
+          observabilityCredentials?: NewConnector['observabilityCredentials']
+          azureB2cCredentials?: NewConnector['azureB2cCredentials']
+          azureEntraIdCredentials?: NewConnector['azureEntraIdCredentials']
+        }>
+      }
+      const source = payload.connectors?.[0]
+      if (!source) throw new Error('Connector export payload was empty')
+
+      setWizardDraft({
+        existingConnectorId: conn.id,
+        type: source.type,
+        name: source.name,
+        description: source.description ?? '',
+        endpoint: source.endpoint ?? '',
+        runtimeConfig: source.runtimeConfig ?? {},
+        aiCredentials: source.aiCredentials,
+        observabilityCredentials: source.observabilityCredentials,
+        azureB2cCredentials: source.azureB2cCredentials,
+        azureEntraIdCredentials: source.azureEntraIdCredentials,
+      })
+      setShowWizard(true)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load connector for editing'
+      showNotice('error', msg)
+    }
+  }
 
   function toggleStatus(id: string) {
     setConns(prev => prev.map(c => c.id === id ? { ...c, status: c.status === 'connected' ? 'disconnected' : 'connected' } : c))
@@ -433,16 +758,21 @@ export default function ConnectionsPage() {
   async function handleCreated(newConn: NewConnector, job: ConnectorJob) {
     // Persist to server registry
     const body: Record<string, unknown> = {
+      ...(newConn.existingConnectorId ? { id: newConn.existingConnectorId } : {}),
       name: newConn.name, type: newConn.type, authMethod: newConn.authMethod,
       endpoint: newConn.endpoint, description: newConn.description || `${TYPE_CFG[newConn.type].label} connector`,
       datasets: [], syncInterval: newConn.syncInterval,
+      ...(newConn.sourceDiscoveryId ? { sourceDiscoveryId: newConn.sourceDiscoveryId } : {}),
       ...(newConn.runtimeConfig ? { runtimeConfig: newConn.runtimeConfig } : {}),
       ...(newConn.aiCredentials ? { aiCredentials: newConn.aiCredentials } : {}),
+      ...(newConn.observabilityCredentials ? { observabilityCredentials: newConn.observabilityCredentials } : {}),
+      ...(newConn.azureB2cCredentials ? { azureB2cCredentials: newConn.azureB2cCredentials } : {}),
+      ...(newConn.azureEntraIdCredentials ? { azureEntraIdCredentials: newConn.azureEntraIdCredentials } : {}),
     }
     let conn: Connection
     try {
       const res = await fetch('/api/connectors', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: newConn.existingConnectorId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       conn = await res.json() as Connection
@@ -455,45 +785,222 @@ export default function ConnectionsPage() {
         syncInterval: newConn.syncInterval, latencyMs: 0, sparkValues: [],
       }
     }
-    setConns(prev => [conn, ...prev])
+    setConns(prev => newConn.existingConnectorId
+      ? prev.map(existing => existing.id === conn.id ? conn : existing)
+      : [conn, ...prev])
+    setWizardDraft(null)
     // File uploads don't need a background job panel — the parse happened client-side
-    if (newConn.type !== 'file') {
+    if (newConn.type !== 'file' && !newConn.existingConnectorId) {
       setJobs(prev => [job, ...prev])
       setShowJobs(true)
     }
     setSelected(conn)
+    void loadDiscovery()
+  }
+
+  async function runDiscoveryScan() {
+    setDiscoveryLoading(true)
+    try {
+      const res = await fetch('/api/discovery', { method: 'POST' })
+      const data = await res.json() as DiscoveryOverview
+      setDiscovery(data)
+    } catch {
+      showNotice('error', 'Discovery scan failed')
+    } finally {
+      setDiscoveryLoading(false)
+    }
+  }
+
+  async function updateDiscoveryStatus(id: string, status: 'new' | 'dismissed') {
+    try {
+      const res = await fetch(`/api/discovery/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      })
+      if (!res.ok) throw new Error('Discovery update failed')
+      await loadDiscovery()
+    } catch {
+      showNotice('error', 'Failed to update discovery candidate')
+    }
+  }
+
+  async function startDiscoveryConnector(candidateId: string) {
+    try {
+      const res = await fetch(`/api/discovery/${candidateId}/convert`, { method: 'POST' })
+      if (!res.ok) throw new Error('Draft conversion failed')
+      const draft = await res.json() as DiscoveryConnectorDraft
+      setWizardDraft(draft)
+      setShowWizard(true)
+    } catch {
+      showNotice('error', 'Failed to prepare connector draft')
+    }
   }
 
   // Panel layout widths
   const hasDetail = !!selected
   const hasJobs = showJobs
-  const gridCols = hasDetail && hasJobs ? 'grid-cols-[minmax(0,1fr)_340px_280px]' : hasDetail ? 'grid-cols-[minmax(0,1fr)_360px]' : hasJobs ? 'grid-cols-[minmax(0,1fr)_300px]' : 'grid-cols-1'
+  const gridCols = hasDetail && hasJobs
+    ? 'grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)] 2xl:grid-cols-[minmax(0,1.6fr)_minmax(380px,0.95fr)_minmax(300px,0.8fr)]'
+    : hasDetail
+      ? 'grid-cols-1 xl:grid-cols-[minmax(0,1.5fr)_minmax(380px,0.95fr)]'
+      : hasJobs
+        ? 'grid-cols-1 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.85fr)]'
+        : 'grid-cols-1'
 
   return (
-    <div className={`grid h-full ${gridCols} transition-all duration-200`}>
+    <div className={`grid h-full min-h-0 ${gridCols} transition-all duration-200`}>
       {/* ── Main list ── */}
-      <div className="flex flex-col border-r border-chef-border overflow-hidden">
+      <div className={`flex flex-col overflow-hidden min-h-0 ${hasDetail || hasJobs ? 'xl:border-r xl:border-chef-border' : ''}`}>
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-chef-border flex items-center gap-3 shrink-0">
-          <Zap size={15} className="text-indigo-400" />
-          <h2 className="text-sm font-semibold text-chef-text flex-1">Connections</h2>
-          <span className="text-[11px] text-chef-muted">{connectedCount}/{conns.length} connected</span>
-          {runningJobs > 0 && (
-            <button onClick={() => setShowJobs(s => !s)}
-              className="flex items-center gap-1.5 text-[11px] text-indigo-400 px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/15 transition-colors">
-              <Loader2 size={10} className="animate-spin" /> {runningJobs} running
-            </button>
+        <div className="px-5 py-3.5 border-b border-chef-border shrink-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <Zap size={15} className="text-indigo-400 shrink-0" />
+              <h2 className="text-sm font-semibold text-chef-text">Connections</h2>
+              <span className="text-[11px] text-chef-muted">{connectedCount}/{conns.length} connected</span>
+            </div>
+            {runningJobs > 0 && (
+              <button onClick={() => setShowJobs(s => !s)}
+                className="flex items-center gap-1.5 text-[11px] text-indigo-400 px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/15 transition-colors">
+                <Loader2 size={10} className="animate-spin" /> {runningJobs} running
+              </button>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={importRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={async e => {
+                  const file = e.target.files?.[0]
+                  e.currentTarget.value = ''
+                  if (!file) return
+                  await importConfig(file)
+                }}
+              />
+              <button
+                onClick={() => importRef.current?.click()}
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 transition-colors"
+              >
+                <Upload size={12} /> Import JSON
+              </button>
+              <button
+                onClick={() => void pasteConfigFromClipboard()}
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 transition-colors"
+              >
+                <Copy size={12} /> Paste JSON
+              </button>
+              <button
+                onClick={() => void exportConfig()}
+                disabled={conns.length === 0}
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download size={12} /> Export JSON
+              </button>
+              <button
+                onClick={() => void copyConfigToClipboard()}
+                disabled={conns.length === 0}
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Copy size={12} /> Copy JSON
+              </button>
+              <button onClick={() => setShowJobs(s => !s)}
+                className={`flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-lg border transition-colors ${showJobs ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20'}`}>
+                <Activity size={12} /> Jobs
+                {jobs.length > 0 && <span className="w-4 h-4 rounded-full bg-indigo-500 text-white text-[9px] font-bold flex items-center justify-center">{Math.min(jobs.length, 9)}</span>}
+              </button>
+              <button onClick={() => { setWizardDraft(null); setShowWizard(true) }}
+                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
+                <Plus size={13} /> Add Connector
+              </button>
+            </div>
+          </div>
+          {transferNotice && (
+            <div className={`mt-3 inline-flex max-w-full items-center gap-2 rounded-lg border px-3 py-1.5 text-[11px] ${
+              transferNotice.tone === 'success'
+                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                : 'border-rose-500/20 bg-rose-500/10 text-rose-300'
+            }`}>
+              {transferNotice.tone === 'success'
+                ? <CheckCircle2 size={12} className="shrink-0" />
+                : <AlertCircle size={12} className="shrink-0" />}
+              <span className="truncate">{transferNotice.msg}</span>
+            </div>
           )}
-          <button onClick={() => setShowJobs(s => !s)}
-            className={`flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-lg border transition-colors ${showJobs ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20'}`}>
-            <Activity size={12} /> Jobs
-            {jobs.length > 0 && <span className="w-4 h-4 rounded-full bg-indigo-500 text-white text-[9px] font-bold flex items-center justify-center">{Math.min(jobs.length, 9)}</span>}
-          </button>
-          <button onClick={() => setShowWizard(true)}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
-            <Plus size={13} /> Add Connector
-          </button>
         </div>
+
+        {(discoveryLoading || discovery?.enabled || activeDiscovery.length > 0 || dismissedDiscovery.length > 0) && (
+          <div className="px-5 py-4 border-b border-chef-border bg-chef-bg/40">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <Radar size={14} className="text-indigo-300 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-chef-text">Discovered instances</div>
+                  <div className="text-[11px] text-chef-muted">
+                    {discoveryLoading
+                      ? 'Loading discovery status…'
+                      : discovery?.enabled
+                        ? `${activeDiscovery.length} candidate${activeDiscovery.length === 1 ? '' : 's'} ready · last scan ${discovery?.lastScan ?? 'never'}`
+                        : 'Discovery is disabled in setup settings'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => void runDiscoveryScan()}
+                disabled={discoveryLoading || discovery?.running || !discovery?.enabled}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/20 px-3 py-1.5 text-[11px] text-indigo-300 hover:bg-indigo-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw size={11} className={discoveryLoading || discovery?.running ? 'animate-spin' : ''} />
+                Rescan
+              </button>
+            </div>
+
+            {discovery?.enabled && (
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {activeDiscovery.length === 0 && !discoveryLoading && (
+                  <div className="rounded-xl border border-dashed border-chef-border px-4 py-5 text-[11px] text-chef-muted md:col-span-2">
+                    No addable services are currently discoverable on the local network.
+                  </div>
+                )}
+                {activeDiscovery.map(candidate => (
+                  <DiscoveryCard
+                    key={candidate.id}
+                    candidate={candidate}
+                    onAdd={() => void startDiscoveryConnector(candidate.id)}
+                    onDismiss={() => void updateDiscoveryStatus(candidate.id, 'dismissed')}
+                    onRestore={() => void updateDiscoveryStatus(candidate.id, 'new')}
+                  />
+                ))}
+              </div>
+            )}
+
+            {dismissedDiscovery.length > 0 && (
+              <div className="mt-4">
+                <button
+                  onClick={() => setShowDismissedDiscovery(value => !value)}
+                  className="inline-flex items-center gap-1.5 text-[11px] text-chef-muted hover:text-chef-text transition-colors"
+                >
+                  <ChevronRight size={11} className={`transition-transform ${showDismissedDiscovery ? 'rotate-90' : ''}`} />
+                  {dismissedDiscovery.length} dismissed candidate{dismissedDiscovery.length === 1 ? '' : 's'}
+                </button>
+                {showDismissedDiscovery && (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    {dismissedDiscovery.map(candidate => (
+                      <DiscoveryCard
+                        key={candidate.id}
+                        candidate={candidate}
+                        onAdd={() => void startDiscoveryConnector(candidate.id)}
+                        onDismiss={() => void updateDiscoveryStatus(candidate.id, 'dismissed')}
+                        onRestore={() => void updateDiscoveryStatus(candidate.id, 'new')}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Type filter */}
         <div className="px-5 py-2.5 border-b border-chef-border flex items-center gap-1.5 shrink-0 overflow-x-auto">
@@ -530,11 +1037,15 @@ export default function ConnectionsPage() {
 
       {/* ── Detail panel ── */}
       {selected && (
-        <div className="border-r border-chef-border overflow-hidden">
+        <div className={`overflow-hidden min-h-[320px] ${hasJobs ? 'border-t border-chef-border xl:border-t-0 2xl:border-r 2xl:border-chef-border' : 'border-t border-chef-border xl:border-t-0'}`}>
           <DetailPanel
             conn={selected}
             onToggle={() => toggleStatus(selected.id)}
             onSync={() => startSync(selected)}
+            onExport={() => void exportConfig([selected.id])}
+            onCopy={() => void copyConfigToClipboard([selected.id])}
+            onClone={() => void cloneConnector(selected)}
+            onEdit={() => void editConnector(selected)}
             onClose={() => setSelected(null)}
           />
         </div>
@@ -542,7 +1053,7 @@ export default function ConnectionsPage() {
 
       {/* ── Jobs panel ── */}
       {showJobs && (
-        <div className="overflow-hidden flex flex-col">
+        <div className={`overflow-hidden flex flex-col min-h-[280px] border-t border-chef-border ${hasDetail ? 'xl:col-span-2 2xl:col-span-1 2xl:border-t-0' : 'xl:border-t-0'} ${hasDetail ? 'max-h-[42vh] 2xl:max-h-none' : ''}`}>
           <JobsPanel jobs={jobs} onClose={() => setShowJobs(false)} />
         </div>
       )}
@@ -550,8 +1061,12 @@ export default function ConnectionsPage() {
       {/* ── Wizard modal ── */}
       {showWizard && (
         <ConnectorWizard
-          onClose={() => setShowWizard(false)}
+          onClose={() => {
+            setShowWizard(false)
+            setWizardDraft(null)
+          }}
           onCreated={handleCreated}
+          initialDraft={wizardDraft}
         />
       )}
     </div>

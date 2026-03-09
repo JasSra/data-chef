@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { executePipelineStep, loadPipelineSourceRows, previewCell } from '@/lib/pipeline-runtime'
+import type { SourceType } from '@/lib/datasets'
 
 type Row = Record<string, unknown>
 
@@ -19,13 +20,18 @@ interface StepInput {
 
 export async function POST(req: NextRequest) {
   try {
-    const { dataset, stepIndex, steps, rowLimit = 50, cachedRows } = await req.json() as {
-      dataset: string
+    const { dataset, sourceType = 'dataset', sourceId, resource, stepIndex, steps, rowLimit = 50, cachedRows } = await req.json() as {
+      dataset?: string
+      sourceType?: SourceType
+      sourceId?: string
+      resource?: string
       stepIndex: number
       steps: StepInput[]
       rowLimit?: number
       cachedRows?: Row[]
     }
+    const resolvedSourceType = sourceType
+    const resolvedSourceId = sourceId ?? dataset ?? ''
 
     const cap = Math.min(Math.max(rowLimit, 10), 500)
     let rows: Row[]
@@ -34,7 +40,7 @@ export async function POST(req: NextRequest) {
     if (cachedRows && Array.isArray(cachedRows) && cachedRows.length > 0) {
       rows = cachedRows.slice(0, cap)
     } else {
-      rows = await loadPipelineSourceRows(dataset, cap)
+      rows = await loadPipelineSourceRows(resolvedSourceType, resolvedSourceId, resource, cap)
       rows = rows.slice(0, cap)
       sourceRows = rows
     }

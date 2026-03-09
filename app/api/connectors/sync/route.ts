@@ -20,6 +20,7 @@ import { NextRequest } from 'next/server'
 import { workerStart, workerEnd } from '@/lib/pipelines'
 import { getDatasetByUrl, updateDatasetSchema } from '@/lib/datasets'
 import { updateConnectorSync, getConnectorRuntimeConfig } from '@/lib/connectors'
+import { runConnectorSyncJob } from '@/lib/connector-sync'
 import {
   extractArray,
   inferSchema,
@@ -83,6 +84,35 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const t0 = performance.now()
       try {
+        if (connectorId && connectorType !== 'webhook' && connectorType !== 'file') {
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Starting sync for '${connectorName}'` }))
+          controller.enqueue(sse({ type: 'progress', p: 15 }))
+          await sleep(120)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Loading connector runtime configuration' }))
+          controller.enqueue(sse({ type: 'progress', p: 40 }))
+          await sleep(180)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Fetching rows and updating linked datasets' }))
+
+          const result = await runConnectorSyncJob(connectorId, { manageWorker: false })
+          if (!result.ok) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: result.error ?? 'Sync failed' }))
+            controller.enqueue(sse({ type: 'progress', p: 100 }))
+            controller.enqueue(sse({ type: 'done', ok: false, records: 0, durationMs: result.durationMs }))
+            return
+          }
+
+          controller.enqueue(sse({
+            type: 'log',
+            level: 'success',
+            msg: result.syncedDatasets > 0
+              ? `${result.records.toLocaleString()} rows synced across ${result.syncedDatasets} dataset${result.syncedDatasets === 1 ? '' : 's'}`
+              : `${result.records.toLocaleString()} rows sampled successfully`,
+          }))
+          controller.enqueue(sse({ type: 'progress', p: 100 }))
+          controller.enqueue(sse({ type: 'done', ok: true, records: result.records, durationMs: result.durationMs }))
+          return
+        }
+
         if (['postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery'].includes(connectorType)) {
           controller.enqueue(sse({ type: 'log', level: 'info', msg: `Starting sync for '${connectorName}'` }))
           controller.enqueue(sse({ type: 'progress', p: 10 }))

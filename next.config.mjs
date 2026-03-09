@@ -1,7 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Produce a self-contained build for Docker (copies only required files)
-  output: 'standalone',
+  output: process.env.NEXT_OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
   experimental: {
     serverComponentsExternalPackages: [
       '@aws-sdk/client-s3',

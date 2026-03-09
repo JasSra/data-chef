@@ -231,7 +231,11 @@ function run(
       if (typeof av === 'number' && typeof bv === 'number') {
         return orderDir === 'ASC' ? av - bv : bv - av
       }
-      const [as_, bs_] = [String(av), String(bv)]
+      const stringify = (value: unknown) => {
+        if (Array.isArray(value) || (typeof value === 'object' && value !== null)) return JSON.stringify(value)
+        return String(value)
+      }
+      const [as_, bs_] = [stringify(av), stringify(bv)]
       return orderDir === 'ASC' ? as_.localeCompare(bs_) : bs_.localeCompare(as_)
     })
   }
@@ -246,6 +250,7 @@ function run(
       const v = r[col]
       if (v === null || v === undefined) return '∅'
       if (typeof v === 'number')         return String(Math.round(v * 1000) / 1000)
+      if (Array.isArray(v) || (typeof v === 'object' && v !== null)) return JSON.stringify(v)
       return String(v)
     })
   )

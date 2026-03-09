@@ -23,6 +23,17 @@ import {
   inferSchema,
   sampleRowsFromRuntimeConfig,
 } from '@/lib/runtime-data'
+import { probeRedisCapabilities } from '@/lib/redis'
+import {
+  fetchAzureB2CRows,
+  fetchAzureEntraIdRows,
+  getAzureGraphToken,
+  resolveAzureB2CResource,
+  resolveAzureEntraIdResource,
+} from '@/lib/azure-graph'
+import { getGitHubAuthTransaction } from '@/lib/github-auth'
+import { getGitHubCreds, type GitHubCredentials } from '@/lib/connectors'
+import { listAccessibleGitHubRepos, validateGitHubCredentials } from '@/lib/github'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +45,23 @@ function sse(data: object) {
 }
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
+}
+
+function parseAppInsightsConnectionString(connectionString: string): { applicationId: string } {
+  const parts = connectionString
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+
+  for (const part of parts) {
+    const idx = part.indexOf('=')
+    if (idx <= 0) continue
+    const key = part.slice(0, idx).trim().toLowerCase()
+    const value = part.slice(idx + 1).trim()
+    if (key === 'applicationid') return { applicationId: value }
+  }
+
+  return { applicationId: '' }
 }
 
 /* ── Simulated log sequences (server-driven so workers count properly) ─── */
@@ -133,6 +161,66 @@ function getSimLogs(type: string, b: Record<string, unknown>): SimEntry[] {
         { level: 'success', msg: 'Connection verified · KQL engine ready',                delay: 400 },
       ]
     }
+    case 'azuremonitor': {
+      const tenantId = str(b.tenantId, 'xxxxxxxx').slice(0, 8)
+      const workspaceId = str(b.workspaceId, 'xxxxxxxx').slice(0, 8)
+      return [
+        { level: 'info', msg: 'Resolving login.microsoftonline.com', delay: 400 },
+        { level: 'info', msg: `Requesting OAuth2 token (tenant: ${tenantId}…)`, delay: 650 },
+        { level: 'success', msg: 'Azure AD token acquired · client_credentials flow', delay: 420 },
+        { level: 'info', msg: `KQL: requests | take 1 on workspace ${workspaceId}…`, delay: 500 },
+        { level: 'success', msg: 'Azure Monitor workspace query endpoint ready', delay: 380 },
+      ]
+    }
+    case 'elasticsearch':
+      return [
+        { level: 'info', msg: `Connecting to ${str(b.endpoint, 'https://elastic.example.com:9200')}`, delay: 420 },
+        { level: 'info', msg: `Probing index pattern ${str(b.indexPattern, 'logs-*')}`, delay: 540 },
+        { level: 'info', msg: 'POST /_search with size: 1', delay: 480 },
+        { level: 'success', msg: 'Elastic cluster responded · runtime ready', delay: 420 },
+      ]
+    case 'datadog':
+      return [
+        { level: 'info', msg: `Connecting to api.${str(b.site, 'datadoghq.com')}`, delay: 420 },
+        { level: 'info', msg: `Preparing ${str(b.source, 'logs')} query probe`, delay: 520 },
+        { level: 'info', msg: 'POST /api/v2/logs/events/search', delay: 480 },
+        { level: 'success', msg: 'Datadog API responded · runtime ready', delay: 420 },
+      ]
+    case 'azureb2c': {
+      const tenantId = str(b.tenantId, 'xxxxxxxx').slice(0, 8)
+      const clientId = str(b.clientId, 'xxxxxxxx').slice(0, 8)
+      const resource = str(b.resource, 'users')
+      return [
+        { level: 'info',    msg: 'Resolving login.microsoftonline.com',                         delay: 380 },
+        { level: 'info',    msg: `Preparing Microsoft Graph probe (${resource})`,              delay: 420 },
+        { level: 'info',    msg: `Requesting token (tenant: ${tenantId}…, client: ${clientId}…)`, delay: 620 },
+        { level: 'success', msg: 'Microsoft Graph token acquired · client_credentials flow',   delay: 450 },
+        { level: 'info',    msg: `Probing ${resource} via Microsoft Graph`,                    delay: 500 },
+        { level: 'success', msg: 'Connection verified · Azure AD B2C Graph API ready',         delay: 380 },
+      ]
+    }
+    case 'azureentraid': {
+      const tenantId = str(b.tenantId, 'xxxxxxxx').slice(0, 8)
+      const clientId = str(b.clientId, 'xxxxxxxx').slice(0, 8)
+      const resource = str(b.resource, 'users')
+      return [
+        { level: 'info',    msg: 'Resolving login.microsoftonline.com',                            delay: 380 },
+        { level: 'info',    msg: `Preparing Microsoft Graph probe (${resource})`,                 delay: 420 },
+        { level: 'info',    msg: `Requesting token (tenant: ${tenantId}…, client: ${clientId}…)`, delay: 620 },
+        { level: 'success', msg: 'Microsoft Graph token acquired · client_credentials flow',      delay: 450 },
+        { level: 'info',    msg: `Probing ${resource} via Microsoft Graph v1.0`,                  delay: 500 },
+        { level: 'success', msg: 'Connection verified · Azure Entra ID Graph API ready',          delay: 380 },
+      ]
+    }
+    case 'github': {
+      const authMode = str(b.githubAuthMode, 'pat')
+      return [
+        { level: 'info', msg: 'Resolving api.github.com', delay: 300 },
+        { level: 'info', msg: authMode === 'pat' ? 'Validating GitHub personal access token' : authMode === 'oauth' ? 'Validating GitHub OAuth grant' : 'Validating GitHub App installation', delay: 420 },
+        { level: 'info', msg: 'Listing accessible repositories', delay: 480 },
+        { level: 'success', msg: 'GitHub API responded · connector runtime ready', delay: 360 },
+      ]
+    }
     default:
       return [{ level: 'success', msg: 'Connection verified', delay: 500 }]
   }
@@ -172,62 +260,407 @@ export async function POST(req: NextRequest) {
       try {
         if (connectorType === 'appinsights') {
           /* ── Real App Insights test ──────────────────────────────── */
-          const appId        = String(body.appId        ?? '')
+          const authMode     = body.authMode === 'api_key' ? 'api_key' : 'entra_client_secret'
+          const mode         = body.mode === 'workspace' ? 'workspace' : 'appinsights'
+          const connectionString = String(body.connectionString ?? '')
+          const parsedConnection = parseAppInsightsConnectionString(connectionString)
+          const appId        = String(body.appId ?? parsedConnection.applicationId ?? '')
+          const apiKey       = String(body.apiKey ?? '')
+          const workspaceId  = String(body.workspaceId  ?? '')
           const tenantId     = String(body.tenantId     ?? '')
           const clientId     = String(body.clientId     ?? '')
           const clientSecret = String(body.clientSecret ?? '')
 
-          if (!appId || !tenantId || !clientId || !clientSecret) {
-            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Missing required credentials (appId, tenantId, clientId, clientSecret)' }))
+          if (authMode === 'api_key' && (!appId || !apiKey)) {
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'error',
+              msg: 'Missing required credentials (appId, apiKey)',
+            }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+          if (authMode !== 'api_key' && (!tenantId || !clientId || !clientSecret || (mode === 'workspace' ? !workspaceId : !appId))) {
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'error',
+              msg: mode === 'workspace'
+                ? 'Missing required credentials (workspaceId, tenantId, clientId, clientSecret)'
+                : 'Missing required credentials (appId, tenantId, clientId, clientSecret)',
+            }))
             controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
             return
           }
 
-          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Resolving login.microsoftonline.com` }))
+          try {
+            const {
+              executeKQL,
+              executeKQLApiKey,
+              executeKQLWorkspace,
+            } = await import('@/lib/appinsights')
+
+            if (authMode === 'api_key') {
+              controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Resolving api.applicationinsights.io' }))
+              await sleep(180)
+              controller.enqueue(sse({ type: 'log', level: 'info', msg: `Preparing App Insights API-key probe (${appId.slice(0, 8)}…)` }))
+              await sleep(220)
+              controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Sending x-api-key authenticated query' }))
+            } else {
+              controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Resolving login.microsoftonline.com' }))
+              await sleep(180)
+              controller.enqueue(sse({
+                type: 'log',
+                level: 'info',
+                msg: mode === 'workspace'
+                  ? `Preparing Azure Monitor workspace probe (${workspaceId.slice(0, 8)}…)`
+                  : `Preparing App Insights probe (${appId.slice(0, 8)}…)`,
+              }))
+              await sleep(220)
+              controller.enqueue(sse({ type: 'log', level: 'info', msg: `Requesting OAuth2 token (tenant: ${tenantId.slice(0, 8)}…)` }))
+              controller.enqueue(sse({ type: 'log', level: 'success', msg: 'Azure AD token acquired · client_credentials flow' }))
+            }
+            await sleep(220)
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'info',
+              msg: authMode === 'api_key'
+                ? 'KQL: requests | take 1 via App Insights API key'
+                : mode === 'workspace'
+                ? 'KQL: requests | take 1 via Log Analytics'
+                : 'KQL: requests | take 1 via App Insights API',
+            }))
+
+            const result = authMode === 'api_key'
+              ? await executeKQLApiKey(appId, apiKey, 'requests | take 1', 'PT1H')
+              : mode === 'workspace'
+              ? await executeKQLWorkspace(workspaceId, tenantId, clientId, clientSecret, 'requests | take 1', 'PT1H')
+              : await executeKQL(appId, tenantId, clientId, clientSecret, 'requests | take 1', 'PT1H')
+
+            if (result.error) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: result.error }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs: result.durationMs }))
+              return
+            }
+
+            const sourceLabel = authMode === 'api_key'
+              ? 'App Insights API key'
+              : mode === 'workspace'
+              ? 'Azure Monitor workspace'
+              : 'App Insights OAuth API'
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'success',
+              msg: `Connection verified · ${sourceLabel} responded in ${result.durationMs}ms`,
+            }))
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'info',
+              msg: result.rowCount > 0
+                ? `${result.rowCount} sample row${result.rowCount === 1 ? '' : 's'} returned`
+                : 'Query executed successfully',
+            }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: result.durationMs }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: `Azure probe error: ${msg}` }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
+        } else if (connectorType === 'azuremonitor') {
+          const workspaceId = String(body.workspaceId ?? '')
+          const tenantId = String(body.tenantId ?? '')
+          const clientId = String(body.clientId ?? '')
+          const clientSecret = String(body.clientSecret ?? '')
+
+          if (!workspaceId || !tenantId || !clientId || !clientSecret) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Missing required credentials (workspaceId, tenantId, clientId, clientSecret)' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Resolving login.microsoftonline.com' }))
+          await sleep(160)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Preparing Azure Monitor workspace probe (${workspaceId.slice(0, 8)}…)` }))
           await sleep(200)
           controller.enqueue(sse({ type: 'log', level: 'info', msg: `Requesting OAuth2 token (tenant: ${tenantId.slice(0, 8)}…)` }))
 
-          let token: string
           try {
-            const { getAzureToken } = await import('@/lib/appinsights')
-            token = await getAzureToken(tenantId, clientId, clientSecret)
+            const { executeKQLWorkspace } = await import('@/lib/appinsights')
             controller.enqueue(sse({ type: 'log', level: 'success', msg: 'Azure AD token acquired · client_credentials flow' }))
+            await sleep(220)
+            controller.enqueue(sse({ type: 'log', level: 'info', msg: 'KQL: requests | take 1 via Log Analytics' }))
+            const result = await executeKQLWorkspace(workspaceId, tenantId, clientId, clientSecret, 'requests | take 1', 'PT1H')
+            if (result.error) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: result.error }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs: result.durationMs }))
+              return
+            }
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Connection verified · Azure Monitor responded in ${result.durationMs}ms` }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: result.durationMs }))
+            return
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e)
-            controller.enqueue(sse({ type: 'log', level: 'error', msg: `Token error: ${msg}` }))
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: `Azure Monitor probe error: ${msg}` }))
             controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
             return
           }
-          await sleep(300)
 
-          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Probing App Insights app: ${appId.slice(0, 8)}…` }))
-
-          let probeRes: Response
+        } else if (connectorType === 'elasticsearch') {
+          const endpoint = String(body.endpoint ?? '').replace(/\/$/, '')
+          const authType = body.authType === 'apikey' ? 'apikey' : 'basic'
+          const indexPattern = String(body.indexPattern ?? 'logs-*')
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+          if (!endpoint) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Missing required field: endpoint' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+          if (authType === 'apikey') {
+            const apiKey = String(body.apiKey ?? '')
+            if (!apiKey) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: 'API key auth requires apiKey' }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+              return
+            }
+            headers.Authorization = `ApiKey ${apiKey}`
+          } else {
+            const username = String(body.username ?? '')
+            const password = String(body.password ?? '')
+            if (!username || !password) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Basic auth requires username and password' }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+              return
+            }
+            headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
+          }
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Connecting to ${endpoint}` }))
+          await sleep(180)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `POST ${indexPattern}/_search` }))
           try {
-            probeRes = await fetch(`https://api.applicationinsights.io/v1/apps/${appId}/query`, {
-              method:  'POST',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body:    JSON.stringify({ query: 'requests | limit 1', timespan: 'PT1H' }),
-              signal:  AbortSignal.timeout(12_000),
+            const res = await fetch(`${endpoint}/${encodeURIComponent(indexPattern)}/_search`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ size: 1, query: { match_all: {} } }),
+              signal: AbortSignal.timeout(20_000),
             })
+            const latencyMs = Math.round(performance.now() - t0)
+            if (!res.ok) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: `Elastic API ${res.status}: ${(await res.text()).slice(0, 300)}` }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs }))
+              return
+            }
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: 'Connection verified · Elastic cluster responded' }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs }))
+            return
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e)
-            controller.enqueue(sse({ type: 'log', level: 'error', msg: `API probe failed: ${msg}` }))
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: `Elastic probe error: ${msg}` }))
             controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
             return
           }
 
-          const latencyMs = Math.round(performance.now() - t0)
-          if (!probeRes.ok) {
-            const text = await probeRes.text()
-            controller.enqueue(sse({ type: 'log', level: 'error', msg: `App Insights API ${probeRes.status}: ${text.slice(0, 200)}` }))
-            controller.enqueue(sse({ type: 'done', ok: false, latencyMs }))
+        } else if (connectorType === 'datadog') {
+          const site = String(body.site ?? '')
+          const apiKey = String(body.apiKey ?? '')
+          const applicationKey = String(body.applicationKey ?? '')
+          const source = String(body.source ?? 'logs')
+          if (!site || !apiKey || !applicationKey) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Missing required credentials (site, apiKey, applicationKey)' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Connecting to api.${site}` }))
+          await sleep(180)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Preparing ${source} query probe` }))
+          try {
+            const res = await fetch(`https://api.${site}/api/v2/logs/events/search`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'DD-API-KEY': apiKey,
+                'DD-APPLICATION-KEY': applicationKey,
+              },
+              body: JSON.stringify({
+                filter: { from: 'now-1h', to: 'now', query: '*' },
+                sort: '-timestamp',
+                page: { limit: 1 },
+              }),
+              signal: AbortSignal.timeout(20_000),
+            })
+            const latencyMs = Math.round(performance.now() - t0)
+            if (!res.ok) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: `Datadog API ${res.status}: ${(await res.text()).slice(0, 300)}` }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs }))
+              return
+            }
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: 'Connection verified · Datadog API responded' }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: `Datadog probe error: ${msg}` }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
             return
           }
 
-          controller.enqueue(sse({ type: 'log', level: 'success', msg: `Connection verified · App Insights API responded in ${latencyMs}ms` }))
-          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'KQL tables available: requests, exceptions, traces, dependencies, customEvents' }))
-          controller.enqueue(sse({ type: 'done', ok: true, latencyMs }))
+        } else if (connectorType === 'azureb2c' || connectorType === 'azureentraid') {
+          const authMode = body.authMode === 'client_certificate' ? 'client_certificate' : 'client_secret'
+          const resource = String(body.resource ?? 'users')
+          const tenantId = String(body.tenantId ?? '')
+          const clientId = String(body.clientId ?? '')
+          const clientSecret = String(body.clientSecret ?? '')
+          const certificatePem = String(body.certificatePem ?? '')
+          const privateKeyPem = String(body.privateKeyPem ?? '')
+          const thumbprint = String(body.thumbprint ?? '')
+
+          if (!tenantId || !clientId) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Missing required credentials (tenantId, clientId)' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+          if (authMode === 'client_secret' && !clientSecret) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Client secret auth requires clientSecret' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+          if (authMode === 'client_certificate' && (!certificatePem || !privateKeyPem)) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Client certificate auth requires certificatePem and privateKeyPem' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+
+          const spec = connectorType === 'azureb2c'
+            ? resolveAzureB2CResource(resource, 1)
+            : resolveAzureEntraIdResource(resource, 1)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Resolving login.microsoftonline.com' }))
+          await sleep(160)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Preparing Microsoft Graph probe for ${spec.label}` }))
+          await sleep(180)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Requesting OAuth2 token (tenant: ${tenantId.slice(0, 8)}…)` }))
+
+          try {
+            const creds: {
+              tenantId: string
+              clientId: string
+              authMode: 'client_secret' | 'client_certificate'
+              clientSecret: string
+              certificatePem: string
+              privateKeyPem: string
+              thumbprint: string
+              cloud: 'global'
+            } = {
+              tenantId,
+              clientId,
+              authMode,
+              clientSecret,
+              certificatePem,
+              privateKeyPem,
+              thumbprint,
+              cloud: 'global' as const,
+            }
+            await getAzureGraphToken(creds)
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'success',
+              msg: authMode === 'client_certificate'
+                ? 'Microsoft Graph token acquired · client certificate flow'
+                : 'Microsoft Graph token acquired · client_credentials flow',
+            }))
+            await sleep(200)
+            controller.enqueue(sse({ type: 'log', level: 'info', msg: `GET ${spec.path}` }))
+
+            const result = connectorType === 'azureb2c'
+              ? await fetchAzureB2CRows(creds, resource, { rowLimit: 1 })
+              : await fetchAzureEntraIdRows(creds, resource, { rowLimit: 1 })
+            const latencyMs = Math.round(performance.now() - t0)
+            controller.enqueue(sse({
+              type: 'log',
+              level: spec.isBeta ? 'warn' : 'info',
+              msg: spec.isBeta
+                ? `${spec.label} uses Microsoft Graph beta endpoints`
+                : `${spec.label} uses Microsoft Graph v1.0`,
+            }))
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'success',
+              msg: `Connection verified · ${result.rows.length} sample row${result.rows.length === 1 ? '' : 's'} returned`,
+            }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({
+              type: 'log',
+              level: 'error',
+              msg: `${connectorType === 'azureb2c' ? 'Azure AD B2C' : 'Azure Entra ID'} probe error: ${msg}`,
+            }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
+        } else if (connectorType === 'github') {
+          const authMode = String(body.githubAuthMode ?? body.authMode ?? 'pat')
+          let credentials: GitHubCredentials | null = null
+
+          if (authMode === 'pat') {
+            const token = String(body.token ?? '')
+            if (!token) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: 'GitHub PAT is required' }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+              return
+            }
+            credentials = { mode: 'pat', token }
+          } else if (body.transactionId) {
+            credentials = getGitHubAuthTransaction(String(body.transactionId))?.credentials ?? null
+          } else if (body.connectorId) {
+            credentials = getGitHubCreds(String(body.connectorId))
+          }
+
+          if (!credentials) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'GitHub authorization is required before testing this connector' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Resolving api.github.com' }))
+          await sleep(180)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: credentials.mode === 'pat' ? 'Preparing GitHub PAT probe' : credentials.mode === 'oauth' ? 'Preparing GitHub OAuth probe' : 'Preparing GitHub App installation probe' }))
+          try {
+            const validation = await validateGitHubCredentials(credentials, typeof body.connectorId === 'string' ? { connectorId: String(body.connectorId) } : {})
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Authenticated as ${validation.viewer.login}` }))
+            const repos = await listAccessibleGitHubRepos(credentials, typeof body.connectorId === 'string' ? { connectorId: String(body.connectorId) } : {})
+            controller.enqueue(sse({ type: 'log', level: 'info', msg: `${repos.length} accessible repositories discovered` }))
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: 'Connection verified · GitHub API responded' }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: `GitHub probe error: ${msg}` }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
+        } else if (connectorType === 'redis') {
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Connecting to Redis…' }))
+          await sleep(120)
+          try {
+            const capabilities = await probeRedisCapabilities(body)
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Connected to Redis ${capabilities.redisVersion || 'server'}` }))
+            controller.enqueue(sse({ type: 'log', level: 'info', msg: `Server kind: ${capabilities.serverKind}${capabilities.modules.length ? ` · modules: ${capabilities.modules.join(', ')}` : ''}` }))
+            const rows = await sampleRowsFromRuntimeConfig('redis', body, { rowLimit: 25 })
+            const schema = inferSchema(rows)
+            controller.enqueue(sse({ type: 'log', level: 'info', msg: `Fetched ${rows.length} sample row${rows.length === 1 ? '' : 's'}` }))
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `${schema.length} fields inferred · Redis runtime ready` }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
 
         } else if (['postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery'].includes(connectorType)) {
           controller.enqueue(sse({ type: 'log', level: 'info', msg: `Starting live ${connectorType} probe` }))

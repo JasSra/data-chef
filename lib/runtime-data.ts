@@ -6,9 +6,17 @@ import {
   getConnectorRuntimeConfig,
   getConnector,
   getAppInsightsCreds,
+  getAzureB2CCreds,
+  getAzureEntraIdCreds,
+  getObservabilityCreds,
   type ConnectorRuntimeConfig,
 } from '@/lib/connectors'
-import { executeKQL } from '@/lib/appinsights'
+import { executeKQL, executeKQLApiKey, executeKQLWorkspace } from '@/lib/appinsights'
+import { fetchAzureB2CRows, fetchAzureEntraIdRows } from '@/lib/azure-graph'
+import { fetchGitHubRows } from '@/lib/github'
+import { isObservabilityConnectorType, sampleObservabilityRows } from '@/lib/observability'
+import { sampleRedisRowsFromConfig } from '@/lib/redis'
+import type { SourceReference, SourceType } from '@/lib/datasets'
 
 export type RuntimeRow = Record<string, unknown>
 
@@ -29,8 +37,13 @@ export interface RuntimeQueryResult {
   pushedDown: boolean
 }
 
+export interface RuntimeTableQueryResult extends RuntimeQueryResult {
+  provider?: string
+  kqlTranslated?: string
+}
+
 type SupportedRuntimeConnector =
-  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'appinsights'
+  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'redis' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github'
 
 export function inferType(value: unknown): string {
   if (value === null || value === undefined) return 'null'
@@ -252,9 +265,20 @@ export async function sampleRowsFromRuntimeConfig(
 ): Promise<RuntimeRow[]> {
   const rowLimit = options.rowLimit ?? 500
 
+  function resolveHttpUrl(baseUrl: string, resource?: string): string {
+    const trimmed = (resource ?? '').trim()
+    if (!trimmed) return baseUrl
+    if (/^https?:\/\//i.test(trimmed)) return trimmed
+    try {
+      return new URL(trimmed, baseUrl).toString()
+    } catch {
+      return baseUrl
+    }
+  }
+
   switch (type) {
     case 'http':
-      return fetchHttpRecords(String(config.url ?? ''), {
+      return fetchHttpRecords(resolveHttpUrl(String(config.url ?? ''), options.resource), {
         auth: typeof config.auth === 'string' ? config.auth : undefined,
         apiKeyHeader: typeof config.apiKeyHeader === 'string' ? config.apiKeyHeader : undefined,
         apiKeyValue: typeof config.apiKeyValue === 'string' ? config.apiKeyValue : undefined,
@@ -274,24 +298,84 @@ export async function sampleRowsFromRuntimeConfig(
       return sampleSftpRowsFromConfig(config, rowLimit)
     case 'bigquery':
       return sampleBigQueryRowsFromConfig(config, options.resource, rowLimit)
+    case 'redis':
+      return sampleRedisRowsFromConfig(config, options.resource, rowLimit)
     case 'appinsights': {
       const connectorId = String(config.connectorId ?? '')
       if (!connectorId) throw new Error('App Insights connectorId is required')
       const creds = getAppInsightsCreds(connectorId)
       if (!creds) throw new Error('App Insights credentials not found')
       const kql = options.resource?.trim() || 'requests | limit 100'
-      const result = await executeKQL(
-        creds.appId,
-        creds.tenantId,
-        creds.clientId,
-        creds.clientSecret,
-        kql,
-        'PT24H',
-      )
+      const result = creds.authMode === 'api_key'
+        ? await executeKQLApiKey(
+            creds.appId,
+            creds.apiKey,
+            kql,
+            'PT24H',
+          )
+        : creds.mode === 'workspace'
+        ? await executeKQLWorkspace(
+            creds.workspaceId ?? '',
+            creds.tenantId ?? '',
+            creds.clientId ?? '',
+            creds.clientSecret ?? '',
+            kql,
+            'PT24H',
+          )
+        : await executeKQL(
+            creds.appId,
+            creds.tenantId ?? '',
+            creds.clientId ?? '',
+            creds.clientSecret ?? '',
+            kql,
+            'PT24H',
+          )
       if (result.error) throw new Error(result.error)
       return result.rows.slice(0, rowLimit).map(values => rowFromColumns(result.columns, values))
     }
+    case 'azuremonitor':
+    case 'elasticsearch':
+    case 'datadog': {
+      const connectorId = String(config.connectorId ?? '')
+      if (!connectorId) throw new Error(`${type} connectorId is required`)
+      const creds = getObservabilityCreds(connectorId)
+      if (!creds) throw new Error(`${type} credentials not found`)
+      return sampleObservabilityRows(connectorId, {
+        rowLimit,
+        resource: options.resource,
+        timespan: 'PT24H',
+      })
+    }
+    case 'azureb2c': {
+      const connectorId = String(config.connectorId ?? '')
+      if (!connectorId) throw new Error('Azure AD B2C connectorId is required')
+      const creds = getAzureB2CCreds(connectorId)
+      if (!creds) throw new Error('Azure AD B2C credentials not found')
+      const result = await fetchAzureB2CRows(creds, options.resource ?? String(config.resource ?? 'users'), {
+        rowLimit,
+      })
+      return result.rows
+    }
+    case 'azureentraid': {
+      const connectorId = String(config.connectorId ?? '')
+      if (!connectorId) throw new Error('Azure Entra ID connectorId is required')
+      const creds = getAzureEntraIdCreds(connectorId)
+      if (!creds) throw new Error('Azure Entra ID credentials not found')
+      const result = await fetchAzureEntraIdRows(creds, options.resource ?? String(config.resource ?? 'users'), {
+        rowLimit,
+      })
+      return result.rows
+    }
+    case 'github': {
+      const connectorId = String(config.connectorId ?? '')
+      if (!connectorId) throw new Error('GitHub connectorId is required')
+      return fetchGitHubRows(connectorId, options.resource ?? String(config.defaultResource ?? 'repos'), {
+        rowLimit,
+      })
+    }
   }
+
+  throw new Error(`Unsupported connector runtime type: ${String(type)}`)
 }
 
 export async function loadRowsFromConnector(
@@ -308,10 +392,54 @@ export async function loadRowsFromConnector(
     return sampleRowsFromRuntimeConfig('appinsights', { ...config, connectorId }, options)
   }
 
+  if (isObservabilityConnectorType(connector.type)) {
+    return sampleRowsFromRuntimeConfig(connector.type, { ...config, connectorId }, options)
+  }
+
+  if (connector.type === 'azureb2c') {
+    return sampleRowsFromRuntimeConfig('azureb2c', { ...config, connectorId }, options)
+  }
+
+  if (connector.type === 'redis') {
+    return sampleRowsFromRuntimeConfig('redis', config, options)
+  }
+
+  if (connector.type === 'azureentraid') {
+    return sampleRowsFromRuntimeConfig('azureentraid', { ...config, connectorId }, options)
+  }
+
+  if (connector.type === 'github') {
+    return sampleRowsFromRuntimeConfig('github', { ...config, connectorId }, options)
+  }
+
   return sampleRowsFromRuntimeConfig(connector.type as SupportedRuntimeConnector, config, {
     ...options,
     rowLimit,
   })
+}
+
+export async function loadSourceRows(
+  source: SourceReference,
+  options: { rowLimit?: number } = {},
+): Promise<RuntimeRow[]> {
+  if (source.sourceType === 'dataset') {
+    return loadDatasetRows(source.sourceId, options)
+  }
+
+  return loadRowsFromConnector(source.sourceId, {
+    rowLimit: options.rowLimit,
+    resource: source.resource,
+  })
+}
+
+export async function loadSourceRaw(
+  source: SourceReference,
+  options: { rowLimit?: number } = {},
+): Promise<unknown[]> {
+  if (source.sourceType === 'dataset') {
+    return loadDatasetRaw(source.sourceId, options)
+  }
+  return loadSourceRows(source, options)
 }
 
 function rowFromColumns(columns: string[], values: string[]): RuntimeRow {
@@ -537,6 +665,43 @@ export async function executeDatasetQuery(
   }
 }
 
+export async function executeSourceQuery(
+  source: SourceReference,
+  sql: string,
+): Promise<RuntimeQueryResult | null> {
+  if (source.sourceType === 'dataset') {
+    return executeDatasetQuery(source.sourceId, sql)
+  }
+
+  const connector = getConnector(source.sourceId)
+  if (!connector) throw new Error(`Unknown connector: "${source.sourceId}"`)
+  if (connector.type !== 'postgresql') return null
+
+  const config = getConnectorRuntimeConfig(source.sourceId)
+  if (!config) throw new Error(`Connector "${connector.name}" has no runtime config`)
+
+  const client = await getPgClient(config)
+  try {
+    const queryText = source.resource?.trim()
+      ? `WITH source_rows AS (${source.resource}) ${sql}`
+      : sql
+    const result = await client.query(queryText)
+    const columns = result.fields.map((f: { name: string }) => f.name)
+    const rows = result.rows.map((row: RuntimeRow) =>
+      columns.map((col: string) => formatPgValue(row[col]))
+    )
+    return {
+      columns,
+      rows,
+      rowCount: rows.length,
+      totalRows: rows.length,
+      pushedDown: true,
+    }
+  } finally {
+    await client.end()
+  }
+}
+
 export function getDatasetRuntimeRecord(datasetId: string): DatasetRecord | null {
   return getDatasets().find(d =>
     d.id === datasetId || d.name === datasetId || d.queryDataset === datasetId
@@ -588,6 +753,11 @@ export async function loadDatasetRaw(
 
 export function bytesForRows(rows: number): number {
   return rows * 400
+}
+
+export function bytesForSource(sourceType: SourceType, rowCount: number): number {
+  if (sourceType === 'dataset') return bytesForRows(rowCount)
+  return Math.max(bytesForRows(rowCount), rowCount * 200)
 }
 
 export function parseSchemaText(schemaText: string): Map<string, string> {

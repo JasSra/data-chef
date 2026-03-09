@@ -1,15 +1,17 @@
 /**
  * Server-side Azure Application Insights / Azure Monitor helper.
  *
- * Supports two query paths:
- *   1. App Insights REST API v1  (legacy, works with all resource types)
+ * Supports three query paths:
+ *   1. App Insights REST API v1 via API key
+ *      GET https://api.applicationinsights.io/v1/apps/{appId}/query
+ *
+ *   2. App Insights REST API v1 via Microsoft Entra OAuth (legacy compatibility)
  *      POST https://api.applicationinsights.io/v1/apps/{appId}/query
  *
- *   2. Azure Monitor Log Analytics API  (recommended for workspace-based resources)
+ *   3. Azure Monitor Log Analytics API
  *      POST https://api.loganalytics.azure.com/v1/workspaces/{workspaceId}/query
  *
- * Both use the same OAuth2 client_credentials flow but with different resource scopes.
- * Token cache persists across requests within the same Node.js process.
+ * OAuth token cache persists across requests within the same Node.js process.
  */
 
 interface TokenEntry {
@@ -68,6 +70,29 @@ function parseTable(data: { tables?: Array<{ columns: Array<{ name: string }>; r
   const columns = table.columns.map(c => c.name)
   const rows    = table.rows.map(r => r.map(cell => cell === null || cell === undefined ? '∅' : String(cell)))
   return { columns, rows, rowCount: rows.length, durationMs }
+}
+
+export async function executeKQLApiKey(
+  appId: string,
+  apiKey: string,
+  kql: string,
+  timespan?: string,
+): Promise<AiQueryResult> {
+  const t0 = performance.now()
+  const params = new URLSearchParams({ query: kql })
+  if (timespan) params.set('timespan', timespan)
+
+  const res = await fetch(`https://api.applicationinsights.io/v1/apps/${appId}/query?${params.toString()}`, {
+    method: 'GET',
+    headers: { 'x-api-key': apiKey },
+    signal: AbortSignal.timeout(30_000),
+  })
+  const durationMs = Math.round(performance.now() - t0)
+  if (!res.ok) {
+    const text = await res.text()
+    return { columns: [], rows: [], rowCount: 0, durationMs, error: `App Insights API ${res.status}: ${text.slice(0, 400)}` }
+  }
+  return parseTable(await res.json(), durationMs)
 }
 
 /**

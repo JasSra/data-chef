@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
+import SetupWizard from './SetupWizard'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -16,6 +17,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+      <SetupWizard />
     </div>
   )
 }

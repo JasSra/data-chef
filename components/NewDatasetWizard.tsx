@@ -188,6 +188,21 @@ function StepConfigure({
 
   return (
     <div className="animate-fade-in space-y-4">
+      {source === 'conn' && form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureb2c' && (
+        <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[11px] text-sky-200">
+          Azure AD B2C resources: <span className="font-mono">users</span>, <span className="font-mono">userFlows</span>, <span className="font-mono">customPolicies</span>, or a matching Microsoft Graph path under those families.
+        </div>
+      )}
+      {source === 'conn' && form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureentraid' && (
+        <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[11px] text-sky-200">
+          Azure Entra ID resources: <span className="font-mono">users</span>, <span className="font-mono">groups</span>, <span className="font-mono">applications</span>, or a matching Microsoft Graph path under those families.
+        </div>
+      )}
+      {source === 'conn' && form.connection && connectors.find(c => c.id === form.connection)?.type === 'github' && (
+        <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[11px] text-sky-200">
+          GitHub resources: <span className="font-mono">repos</span>, <span className="font-mono">pullRequests?state=open</span>, or <span className="font-mono">issues?state=open</span>. Repository allowlists come from the connector, not the dataset resource field.
+        </div>
+      )}
       <FieldRow label="Dataset Name">
         <Input placeholder="e.g. my-api-data" {...f('name')} />
       </FieldRow>
@@ -328,7 +343,14 @@ function StepConfigure({
             </Select>
           </FieldRow>
           <FieldRow label="Resource / Path">
-            <Input placeholder="e.g. /v1/charges or SELECT * FROM users" {...f('resource')} />
+            <Input
+              placeholder={form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureb2c'
+                ? 'e.g. users, userFlows, customPolicies, or /users?$filter=...'
+                : form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureentraid'
+                ? 'e.g. users, groups, applications, or /groups?$filter=...'
+                : 'e.g. /v1/charges or SELECT * FROM users'}
+              {...f('resource')}
+            />
           </FieldRow>
           <FieldRow label="Format">
             <Select {...f('format')}>

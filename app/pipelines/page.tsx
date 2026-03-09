@@ -41,6 +41,7 @@ interface ClientPipeline {
   lastRunStatus:  'succeeded' | 'failed' | 'draft'
   avgDuration:    string
   runsToday:      number
+  sourceType:     'dataset' | 'connector'
   dataset:        string
   recentRuns:     RecentRun[]
   steps:          UiStep[]
@@ -210,6 +211,7 @@ export default function PipelinesPage() {
         status: 'active' | 'draft'
         avgDuration: string
         dataset: string
+        sourceType?: 'dataset' | 'connector'
         uiSteps: UiStep[]
         quarantineStep: UiStep | null
         lastRunAt: number | null
@@ -223,6 +225,7 @@ export default function PipelinesPage() {
           description:    d.description,
           status:         d.status,
           avgDuration:    d.avgDuration,
+          sourceType:     d.sourceType ?? 'dataset',
           dataset:        d.dataset,
           steps:          d.uiSteps,
           quarantineStep: d.quarantineStep,
@@ -470,7 +473,7 @@ export default function PipelinesPage() {
               </div>
               <div className="text-sm text-chef-muted mt-1">{selected.description}</div>
               <div className="flex flex-wrap items-center gap-4 mt-2 text-[11px] text-chef-muted">
-                <span className="flex items-center gap-1.5"><Database size={11} />{selected.dataset}</span>
+                <span className="flex items-center gap-1.5"><Database size={11} />{selected.sourceType === 'connector' ? `Connector: ${selected.dataset}` : selected.dataset}</span>
                 <span className="flex items-center gap-1.5"><Clock size={11} />Last run {selected.lastRun}</span>
                 <span className="flex items-center gap-1.5"><GitBranch size={11} />{selected.runsToday} runs today</span>
                 <span>avg {selected.avgDuration}</span>

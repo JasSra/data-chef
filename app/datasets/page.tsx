@@ -233,6 +233,7 @@ export default function DatasetsPage() {
     d.name.toLowerCase().includes(search.toLowerCase()) ||
     d.format.toLowerCase().includes(search.toLowerCase())
   )
+  const canRefreshFromSource = Boolean(selected?.url || selected?.connectorId)
 
   const formatBadge = (fmt: string) => {
     const colors: Record<string, string> = {
@@ -636,13 +637,13 @@ export default function DatasetsPage() {
                 <div>
                   <div className="text-sm font-semibold text-chef-text mb-1">No live preview available</div>
                   <div className="text-xs text-chef-muted leading-relaxed max-w-xs">
-                    {selected.source === 'http' || selected.url
-                      ? 'Click Refresh to fetch real sample data from the source URL server-side.'
+                    {selected.source === 'http' || selected.url || selected.connectorId
+                      ? 'Click Refresh to fetch real sample data from the linked source server-side.'
                       : `Live preview for ${selected.source} sources requires an active connection. Connect this source to fetch data.`
                     }
                   </div>
                 </div>
-                {(selected.source === 'http' || selected.url) && (
+                {canRefreshFromSource && (
                   <button
                     onClick={handleRefresh}
                     disabled={refreshing}
@@ -672,8 +673,8 @@ export default function DatasetsPage() {
                         </span>
                         <button
                           onClick={handleRefresh}
-                          disabled={refreshing || !selected.url}
-                          title={selected.url ? 'Re-infer schema from source' : 'No source URL to refresh from'}
+                          disabled={refreshing || !canRefreshFromSource}
+                          title={canRefreshFromSource ? 'Re-infer schema from source' : 'No source connected for refresh'}
                           className="text-[11px] text-chef-muted hover:text-chef-text border border-chef-border rounded-md px-2.5 py-1 transition-colors flex items-center gap-1.5 disabled:opacity-40"
                         >
                           <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
@@ -689,12 +690,12 @@ export default function DatasetsPage() {
                     <div>
                       <div className="text-sm font-semibold text-chef-text mb-1">Schema not available</div>
                       <div className="text-xs text-chef-muted">
-                        {selected.url
-                          ? 'Click Refresh to infer the schema by fetching the source URL.'
+                        {canRefreshFromSource
+                          ? 'Click Refresh to infer the schema by fetching the linked source.'
                           : 'Connect this source to infer its schema.'}
                       </div>
                     </div>
-                    {selected.url && (
+                    {canRefreshFromSource && (
                       <button
                         onClick={handleRefresh}
                         disabled={refreshing}

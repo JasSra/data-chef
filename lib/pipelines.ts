@@ -3,6 +3,8 @@
  * Module-level state persists across requests in the same Node.js process.
  */
 
+import type { SourceType } from '@/lib/datasets'
+
 /* ── Step / pipeline types ──────────────────────────────────────────────────── */
 export interface StepDef {
   label:      string
@@ -30,6 +32,20 @@ export interface RuntimeStep {
   config: Record<string, unknown>
 }
 
+export interface PipelineSourceRef {
+  sourceType: SourceType
+  sourceId: string
+  resource?: string
+}
+
+export interface PipelineOutputTarget {
+  mode: 'none' | 'dataset'
+  datasetId?: string
+  datasetName?: string
+  refreshMode?: 'manual' | 'scheduled'
+  refreshIntervalMinutes?: number | null
+}
+
 export interface PipelineDef {
   id:             string
   name:           string
@@ -37,6 +53,10 @@ export interface PipelineDef {
   status:         'active' | 'draft'
   avgDuration:    string
   dataset:        string
+  sourceType?:    SourceType
+  sourceId?:      string
+  resource?:      string
+  outputTarget?:  PipelineOutputTarget | null
   steps:          StepDef[]        // server-side execution steps
   uiSteps:        UiStep[]         // client-side DAG nodes
   runtimeSteps?:  RuntimeStep[]    // runtime step definitions with real config
@@ -56,8 +76,17 @@ export const PIPELINES: PipelineDef[] = []
 
 export const PIPELINE_MAP = new Map(PIPELINES.map(p => [p.id, p]))
 
+function normalizePipeline(pipeline: PipelineDef): PipelineDef {
+  return {
+    ...pipeline,
+    sourceType: pipeline.sourceType ?? 'dataset',
+    sourceId: pipeline.sourceId ?? pipeline.dataset,
+    outputTarget: pipeline.outputTarget ?? null,
+  }
+}
+
 export function addPipeline(def: Omit<PipelineDef, 'id'> & { id?: string }): PipelineDef {
-  const pipeline: PipelineDef = { ...def, id: def.id ?? `p${Date.now().toString(36)}` }
+  const pipeline = normalizePipeline({ ...def, id: def.id ?? `p${Date.now().toString(36)}` })
   PIPELINES.push(pipeline)
   PIPELINE_MAP.set(pipeline.id, pipeline)
   _runHistory.set(pipeline.id, [])
@@ -69,6 +98,8 @@ export function updatePipeline(id: string, patch: Partial<Omit<PipelineDef, 'id'
   const existing = PIPELINE_MAP.get(id)
   if (!existing) return null
   Object.assign(existing, patch)
+  const normalized = normalizePipeline(existing)
+  Object.assign(existing, normalized)
   return existing
 }
 
@@ -136,20 +167,32 @@ export function getWorkerState() {
 
 /* ── API response builder ────────────────────────────────────────────────────── */
 export function buildPipelineResponse(p: PipelineDef) {
+  const normalized = normalizePipeline(p)
   const history  = getRunHistory(p.id)
   const last     = history.at(-1)
   return {
-    id:             p.id,
-    name:           p.name,
-    description:    p.description,
-    status:         p.status,
-    avgDuration:    p.avgDuration,
-    dataset:        p.dataset,
-    uiSteps:        p.uiSteps,
-    quarantineStep: p.quarantineStep,
+    id:             normalized.id,
+    name:           normalized.name,
+    description:    normalized.description,
+    status:         normalized.status,
+    avgDuration:    normalized.avgDuration,
+    dataset:        normalized.dataset,
+    sourceType:     normalized.sourceType,
+    sourceId:       normalized.sourceId,
+    resource:       normalized.resource ?? null,
+    outputTarget:   normalized.outputTarget,
+    uiSteps:        normalized.uiSteps,
+    quarantineStep: normalized.quarantineStep,
     lastRunAt:      last?.startedAt ?? null,
-    lastRunStatus:  last?.status ?? (p.status === 'draft' ? 'draft' : null),
-    runsToday:      _runsToday.get(p.id) ?? 0,
+    lastRunStatus:  last?.status ?? (normalized.status === 'draft' ? 'draft' : null),
+    runsToday:      _runsToday.get(normalized.id) ?? 0,
     recentRuns:     history.map(r => ({ status: r.status, durationMs: r.durationMs })),
   }
+}
+
+export function clearPipelines(): void {
+  PIPELINES.splice(0, PIPELINES.length)
+  PIPELINE_MAP.clear()
+  _runHistory.clear()
+  _runsToday.clear()
 }
