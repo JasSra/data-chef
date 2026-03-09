@@ -918,6 +918,7 @@ export default function QueryPage() {
   function handleSelectAiConnector(id: string | null) {
     setAiConnectorId(id)
     setRedisConnectorId(null)
+    setShowDataMenu(false)
     setShowAiConnMenu(false)
     setResults(null); setQueryError(null); dismissAc()
     if (id) {
@@ -932,6 +933,7 @@ export default function QueryPage() {
   function handleSelectRedisConnector(id: string | null) {
     setRedisConnectorId(id)
     setAiConnectorId(null)
+    setShowDataMenu(false)
     setShowRedisConnMenu(false)
     setResults(null); setQueryError(null); dismissAc()
     if (id) {
@@ -1046,6 +1048,7 @@ export default function QueryPage() {
               </button>
               {showDataMenu && (
                 <div className="absolute left-3 right-3 top-full mt-1 bg-chef-card border border-chef-border rounded-lg shadow-xl shadow-black/40 z-30 py-1 animate-fade-in max-h-72 overflow-auto">
+                  <div className="px-3 pt-2 pb-1 text-[9px] font-semibold uppercase tracking-widest text-chef-border">Datasets & Query Sources</div>
                   {allDatasets.map(ds => (
                     <button key={ds.id} onClick={() => handleDatasetChange(ds.id)}
                       className={`w-full text-left px-3 py-2.5 hover:bg-chef-card-hover transition-colors ${dataset === ds.id ? 'text-indigo-400' : 'text-chef-text'}`}
@@ -1057,6 +1060,42 @@ export default function QueryPage() {
                       <div className="text-[10px] text-chef-muted mt-0.5 truncate">{ds.desc}</div>
                     </button>
                   ))}
+
+                  {redisConnectors.length > 0 && (
+                    <>
+                      <div className="mx-3 my-1 border-t border-chef-border/50" />
+                      <div className="px-3 pt-1 pb-1 text-[9px] font-semibold uppercase tracking-widest text-red-400">Redis</div>
+                      {redisConnectors.map(connector => (
+                        <button key={connector.id} onClick={() => handleSelectRedisConnector(connector.id)}
+                          className={`w-full text-left px-3 py-2.5 hover:bg-chef-card-hover transition-colors ${redisConnectorId === connector.id ? 'text-red-400' : 'text-chef-text'}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-mono truncate">{connector.name}</span>
+                            <span className="text-[10px] font-mono shrink-0 text-red-400">redis</span>
+                          </div>
+                          <div className="text-[10px] text-chef-muted mt-0.5 truncate">Dedicated Redis query modes and catalog tools</div>
+                        </button>
+                      ))}
+                    </>
+                  )}
+
+                  {aiConnectors.length > 0 && (
+                    <>
+                      <div className="mx-3 my-1 border-t border-chef-border/50" />
+                      <div className="px-3 pt-1 pb-1 text-[9px] font-semibold uppercase tracking-widest text-cyan-400">Observe</div>
+                      {aiConnectors.map(connector => (
+                        <button key={connector.id} onClick={() => handleSelectAiConnector(connector.id)}
+                          className={`w-full text-left px-3 py-2.5 hover:bg-chef-card-hover transition-colors ${aiConnectorId === connector.id ? 'text-cyan-400' : 'text-chef-text'}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-mono truncate">{connector.name}</span>
+                            <span className="text-[10px] font-mono shrink-0 text-cyan-400">{connector.type}</span>
+                          </div>
+                          <div className="text-[10px] text-chef-muted mt-0.5 truncate">KQL-first observability querying</div>
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -1111,29 +1150,9 @@ export default function QueryPage() {
               </div>
             )}
 
-            {/* Saved queries + AI mode entry */}
+            {/* Saved queries */}
             <div className="px-3 py-2 border-b border-chef-border flex items-center justify-between">
               <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted">Saved Queries</div>
-              <div className="flex items-center gap-1">
-                {redisConnectors.length > 0 && (
-                  <button
-                    onClick={() => handleSelectRedisConnector(redisConnectors[0].id)}
-                    className="flex items-center gap-1 text-[9px] text-red-400 hover:text-red-300 transition-colors px-1.5 py-0.5 rounded border border-red-500/30 hover:border-red-500/60 bg-red-500/5"
-                    title="Switch to Redis mode"
-                  >
-                    <Database size={9} /> Redis
-                  </button>
-                )}
-                {aiConnectors.length > 0 && (
-                  <button
-                    onClick={() => handleSelectAiConnector(aiConnectors[0].id)}
-                    className="flex items-center gap-1 text-[9px] text-cyan-400 hover:text-cyan-300 transition-colors px-1.5 py-0.5 rounded border border-cyan-500/30 hover:border-cyan-500/60 bg-cyan-500/5"
-                    title="Switch to observability mode"
-                  >
-                    <BarChart2 size={9} /> Observe
-                  </button>
-                )}
-              </div>
             </div>
             <div className="flex-1 overflow-auto py-1">
               {savedQueries.map(sq => (
@@ -1159,9 +1178,9 @@ export default function QueryPage() {
                 <button
                   onClick={() => handleSelectRedisConnector(null)}
                   className="text-[9px] text-chef-muted hover:text-chef-text transition-colors"
-                  title="Back to datasets"
+                  title="Back to sources"
                 >
-                  ← datasets
+                  ← sources
                 </button>
               </div>
               <button
@@ -1264,9 +1283,9 @@ export default function QueryPage() {
                 <button
                   onClick={() => handleSelectAiConnector(null)}
                   className="text-[9px] text-chef-muted hover:text-chef-text transition-colors"
-                  title="Back to datasets"
+                  title="Back to sources"
                 >
-                  ← datasets
+                  ← sources
                 </button>
               </div>
               <button

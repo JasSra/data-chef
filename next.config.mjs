@@ -1,5 +1,10 @@
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js'
+
 /** @type {import('next').NextConfig} */
-const nextConfig = {
+const createNextConfig = (phase) => ({
+  // Keep dev and production artifacts isolated so a `next build` run
+  // does not invalidate the chunk/manifest set used by a live `next dev`.
+  distDir: phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next',
   output: process.env.NEXT_OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
   experimental: {
     serverComponentsExternalPackages: [
@@ -32,6 +37,6 @@ const nextConfig = {
     }
     return config
   },
-}
+})
 
-export default nextConfig
+export default createNextConfig
