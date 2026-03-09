@@ -1,15 +1,34 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { getTenantStoreDir } from '@/lib/tenant'
 
 const STORE_DIR = path.join(process.cwd(), '.datachef')
 
-function ensureStoreDir() {
-  if (!existsSync(STORE_DIR)) mkdirSync(STORE_DIR, { recursive: true })
+function ensureStoreDir(dir: string) {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+}
+
+function getTenantFilePath(fileName: string): string {
+  const tenantDir = getTenantStoreDir()
+  ensureStoreDir(tenantDir)
+  return path.join(tenantDir, fileName)
+}
+
+function getLegacyFilePath(fileName: string): string {
+  return path.join(STORE_DIR, fileName)
+}
+
+function migrateLegacyFileIfNeeded(fileName: string, filePath: string): void {
+  const legacyPath = getLegacyFilePath(fileName)
+  if (existsSync(filePath) || !existsSync(legacyPath)) return
+  ensureStoreDir(path.dirname(filePath))
+  const raw = readFileSync(legacyPath, 'utf8')
+  writeFileSync(filePath, raw, 'utf8')
 }
 
 export function readJsonFile<T>(fileName: string, fallback: T): T {
-  ensureStoreDir()
-  const filePath = path.join(STORE_DIR, fileName)
+  const filePath = getTenantFilePath(fileName)
+  migrateLegacyFileIfNeeded(fileName, filePath)
   if (!existsSync(filePath)) return fallback
 
   try {
@@ -21,15 +40,13 @@ export function readJsonFile<T>(fileName: string, fallback: T): T {
 }
 
 export function writeJsonFile<T>(fileName: string, value: T): void {
-  ensureStoreDir()
-  const filePath = path.join(STORE_DIR, fileName)
-  const tmpPath = `${filePath}.tmp`
+  const filePath = getTenantFilePath(fileName)
+  const tmpPath = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`
   writeFileSync(tmpPath, JSON.stringify(value, null, 2), 'utf8')
   renameSync(tmpPath, filePath)
 }
 
 export function removeJsonFile(fileName: string): void {
-  ensureStoreDir()
-  const filePath = path.join(STORE_DIR, fileName)
+  const filePath = getTenantFilePath(fileName)
   if (existsSync(filePath)) unlinkSync(filePath)
 }

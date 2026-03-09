@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Bell, ChevronDown, Search, Sun, Moon } from 'lucide-react'
+import { Bell, ChevronDown, Sun, Moon } from 'lucide-react'
 import { useTheme } from '@/components/ThemeProvider'
 import { useAppSettings } from '@/components/SettingsProvider'
+import GlobalSearch from '@/components/GlobalSearch'
 
 const pageMeta: Record<string, { title: string; subtitle: string }> = {
   '/datasets':    { title: 'Datasets',     subtitle: 'Browse datasets' },
@@ -19,7 +20,7 @@ export default function TopBar({ pathname }: { pathname: string }) {
   const { settings } = useAppSettings()
   const [dynamicSubtitle, setDynamicSubtitle] = useState<string | null>(null)
   const key  = Object.keys(pageMeta).find(k => pathname.startsWith(k))
-  const meta = key ? pageMeta[key] : { title: 'dataChef', subtitle: '' }
+  const meta = key ? pageMeta[key] : { title: settings?.branding.productName ?? 'dataChef', subtitle: '' }
   const initials = settings?.owner.name
     .split(/\s+/)
     .map(part => part[0]?.toUpperCase())
@@ -73,12 +74,7 @@ export default function TopBar({ pathname }: { pathname: string }) {
         </div>
       </div>
 
-      {/* Search */}
-      <button className="hidden md:flex items-center gap-2 text-xs text-chef-muted hover:text-chef-text border border-chef-border rounded-md px-3 py-1.5 transition-colors hover:border-chef-border bg-chef-card">
-        <Search size={12} />
-        <span>Search...</span>
-        <kbd className="ml-2 text-[10px] text-chef-muted bg-chef-border rounded px-1">⌘K</kbd>
-      </button>
+      <GlobalSearch />
 
       {/* Workspace switcher */}
       <button className="flex items-center gap-1.5 text-[11px] text-chef-muted hover:text-chef-text transition-colors border border-chef-border rounded-md px-2.5 py-1.5 bg-chef-card">

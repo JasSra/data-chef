@@ -7,12 +7,14 @@ import {
   getConnector,
   getAppInsightsCreds,
   getAzureB2CCreds,
+  getAzureDevOpsCreds,
   getAzureEntraIdCreds,
   getObservabilityCreds,
   type ConnectorRuntimeConfig,
 } from '@/lib/connectors'
 import { executeKQL, executeKQLApiKey, executeKQLWorkspace } from '@/lib/appinsights'
 import { fetchAzureB2CRows, fetchAzureEntraIdRows } from '@/lib/azure-graph'
+import { fetchAzureDevOpsRows } from '@/lib/azure-devops'
 import { fetchGitHubRows } from '@/lib/github'
 import { isObservabilityConnectorType, sampleObservabilityRows } from '@/lib/observability'
 import { sampleRedisRowsFromConfig } from '@/lib/redis'
@@ -43,7 +45,7 @@ export interface RuntimeTableQueryResult extends RuntimeQueryResult {
 }
 
 type SupportedRuntimeConnector =
-  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'redis' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github'
+  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'redis' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
 
 export function inferType(value: unknown): string {
   if (value === null || value === undefined) return 'null'
@@ -261,7 +263,7 @@ export async function fetchHttpRecords(
 export async function sampleRowsFromRuntimeConfig(
   type: SupportedRuntimeConnector,
   config: ConnectorRuntimeConfig,
-  options: { rowLimit?: number; resource?: string } = {},
+  options: { rowLimit?: number; resource?: string; timespan?: string } = {},
 ): Promise<RuntimeRow[]> {
   const rowLimit = options.rowLimit ?? 500
 
@@ -311,7 +313,7 @@ export async function sampleRowsFromRuntimeConfig(
             creds.appId,
             creds.apiKey,
             kql,
-            'PT24H',
+            options.timespan ?? 'PT24H',
           )
         : creds.mode === 'workspace'
         ? await executeKQLWorkspace(
@@ -320,7 +322,7 @@ export async function sampleRowsFromRuntimeConfig(
             creds.clientId ?? '',
             creds.clientSecret ?? '',
             kql,
-            'PT24H',
+            options.timespan ?? 'PT24H',
           )
         : await executeKQL(
             creds.appId,
@@ -328,7 +330,7 @@ export async function sampleRowsFromRuntimeConfig(
             creds.clientId ?? '',
             creds.clientSecret ?? '',
             kql,
-            'PT24H',
+            options.timespan ?? 'PT24H',
           )
       if (result.error) throw new Error(result.error)
       return result.rows.slice(0, rowLimit).map(values => rowFromColumns(result.columns, values))
@@ -343,7 +345,7 @@ export async function sampleRowsFromRuntimeConfig(
       return sampleObservabilityRows(connectorId, {
         rowLimit,
         resource: options.resource,
-        timespan: 'PT24H',
+        timespan: options.timespan ?? 'PT24H',
       })
     }
     case 'azureb2c': {
@@ -373,6 +375,15 @@ export async function sampleRowsFromRuntimeConfig(
         rowLimit,
       })
     }
+    case 'azuredevops': {
+      const connectorId = String(config.connectorId ?? '')
+      if (!connectorId) throw new Error('Azure DevOps connectorId is required')
+      const creds = getAzureDevOpsCreds(connectorId)
+      if (!creds) throw new Error('Azure DevOps credentials not found')
+      return fetchAzureDevOpsRows(connectorId, options.resource ?? String(config.defaultResource ?? 'repositories'), {
+        rowLimit,
+      })
+    }
   }
 
   throw new Error(`Unsupported connector runtime type: ${String(type)}`)
@@ -380,7 +391,7 @@ export async function sampleRowsFromRuntimeConfig(
 
 export async function loadRowsFromConnector(
   connectorId: string,
-  options: { rowLimit?: number; resource?: string } = {},
+  options: { rowLimit?: number; resource?: string; timespan?: string } = {},
 ): Promise<RuntimeRow[]> {
   const connector = getConnector(connectorId)
   if (!connector) throw new Error(`Unknown connector: "${connectorId}"`)
@@ -412,6 +423,10 @@ export async function loadRowsFromConnector(
     return sampleRowsFromRuntimeConfig('github', { ...config, connectorId }, options)
   }
 
+  if (connector.type === 'azuredevops') {
+    return sampleRowsFromRuntimeConfig('azuredevops', { ...config, connectorId }, options)
+  }
+
   return sampleRowsFromRuntimeConfig(connector.type as SupportedRuntimeConnector, config, {
     ...options,
     rowLimit,
@@ -420,7 +435,7 @@ export async function loadRowsFromConnector(
 
 export async function loadSourceRows(
   source: SourceReference,
-  options: { rowLimit?: number } = {},
+  options: { rowLimit?: number; timespan?: string } = {},
 ): Promise<RuntimeRow[]> {
   if (source.sourceType === 'dataset') {
     return loadDatasetRows(source.sourceId, options)
@@ -429,6 +444,7 @@ export async function loadSourceRows(
   return loadRowsFromConnector(source.sourceId, {
     rowLimit: options.rowLimit,
     resource: source.resource,
+    timespan: options.timespan,
   })
 }
 

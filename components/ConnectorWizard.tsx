@@ -10,7 +10,7 @@ import {
 import BrandIcon from '@/components/BrandIcon'
 
 /* ── Connector catalog ───────────────────────────────────────────── */
-export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github'
+export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
 
 interface ConnectorDef {
   id: ConnectorId; label: string; desc: string; Icon?: React.ElementType
@@ -22,6 +22,7 @@ interface ConnectorDef {
 const CONNECTORS: ConnectorDef[] = [
   { id: 'http',       label: 'HTTP API',        desc: 'REST, GraphQL, JSON over HTTP(S)',      Icon: Globe,         color: 'text-sky-400',     bg: 'bg-sky-500/10',     border: 'border-sky-500/30',     category: 'API' },
   { id: 'github',     label: 'GitHub',          desc: 'Repos, pull requests, and issues',      brandClass: 'fa-brands fa-github', color: 'text-zinc-200', bg: 'bg-zinc-500/10', border: 'border-zinc-500/30', category: 'Developer Tools', badge: 'Code' },
+  { id: 'azuredevops', label: 'Azure DevOps',   desc: 'Repos, commits, PRs, boards, and pipelines', brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-200', bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', category: 'Developer Tools', badge: 'Azure' },
   { id: 'webhook',    label: 'Inbound Webhook',  desc: 'Receive push events in real-time',      Icon: WebhookIcon,   color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/30',   category: 'API',       badge: 'Push', noTest: true },
   { id: 'postgresql', label: 'PostgreSQL',       desc: 'Tables, views, incremental / CDC',      Icon: Database,      color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/30',    category: 'Database' },
   { id: 'mysql',      label: 'MySQL / MariaDB',  desc: 'Tables or custom SQL queries',          Icon: Database,      color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/30',  category: 'Database' },
@@ -91,6 +92,13 @@ export interface NewConnector {
     username?: string
   }
   githubAuthTransactionId?: string
+  azureDevOpsCredentials?: {
+    mode: 'pat'
+    organization: string
+    pat: string
+    username?: string
+  }
+  azureDevOpsAuthTransactionId?: string
   runtimeConfig?: Record<string, unknown>
 }
 
@@ -106,6 +114,7 @@ export interface DiscoveryConnectorDraft {
   observabilityCredentials?: NewConnector['observabilityCredentials']
   azureB2cCredentials?: NewConnector['azureB2cCredentials']
   azureEntraIdCredentials?: NewConnector['azureEntraIdCredentials']
+  azureDevOpsCredentials?: NewConnector['azureDevOpsCredentials']
 }
 
 /* ── Form state types ────────────────────────────────────────────── */
@@ -255,7 +264,55 @@ interface GitHubForm {
   issueState: 'open' | 'closed' | 'all'
   schedule: string
 }
-type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | RedisForm | FileForm | AppInsightsForm | AzureMonitorForm | ElasticObservabilityForm | DatadogForm | AzureB2CForm | AzureEntraIdForm | GitHubForm
+interface AzureDevOpsOrganizationOption {
+  accountId: string
+  accountName: string
+  accountUri: string
+}
+interface AzureDevOpsProjectOption {
+  id: string
+  name: string
+  description?: string
+  visibility?: string
+}
+interface AzureDevOpsRepoOption {
+  projectId: string
+  projectName: string
+  repositoryId: string
+  repositoryName: string
+  fullName: string
+  defaultBranch?: string
+}
+interface AzureDevOpsForm {
+  name: string
+  description: string
+  authMode: 'pat' | 'entra'
+  organization: string
+  pat: string
+  tenantId: string
+  clientId: string
+  clientSecret: string
+  transactionId: string
+  accountName: string
+  authMessage: string
+  organizationsLoaded: boolean
+  availableOrganizations: AzureDevOpsOrganizationOption[]
+  projectsLoaded: boolean
+  availableProjects: AzureDevOpsProjectOption[]
+  selectedProjects: AzureDevOpsProjectOption[]
+  reposLoaded: boolean
+  availableRepos: AzureDevOpsRepoOption[]
+  selectedRepos: AzureDevOpsRepoOption[]
+  repoSearch: string
+  defaultResource: 'repositories' | 'commits' | 'pullRequests' | 'branches' | 'workItems' | 'pipelines' | 'pipelineRuns'
+  pullRequestState: 'active' | 'completed' | 'abandoned' | 'all'
+  workItemState: string
+  branchFilter: string
+  commitDays: string
+  pipelineRunDays: string
+  schedule: string
+}
+type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | RedisForm | FileForm | AppInsightsForm | AzureMonitorForm | ElasticObservabilityForm | DatadogForm | AzureB2CForm | AzureEntraIdForm | GitHubForm | AzureDevOpsForm
 
 /* ── Validation ──────────────────────────────────────────────────── */
 type FieldErrors = Record<string, string | undefined>
@@ -437,6 +494,21 @@ function validateGitHub(f: GitHubForm): FieldErrors {
     if (!f.appPrivateKey.trim()) e.appPrivateKey = 'GitHub App private key is required'
   }
   if (f.authMode !== 'pat' && !f.transactionId.trim()) e.transactionId = 'GitHub authorization is required'
+  if (f.selectedRepos.length === 0) e.selectedRepos = 'Select at least one repository'
+  return e
+}
+function validateAzureDevOps(f: AzureDevOpsForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!f.organization.trim()) e.organization = 'Organization is required'
+  if (f.authMode === 'pat' && !f.pat.trim()) e.pat = 'Personal access token is required'
+  if (f.authMode === 'entra') {
+    if (!f.tenantId.trim()) e.tenantId = 'Tenant ID is required'
+    if (!f.clientId.trim()) e.clientId = 'Client ID is required'
+    if (!f.clientSecret.trim()) e.clientSecret = 'Client secret is required'
+    if (!f.transactionId.trim()) e.transactionId = 'Azure DevOps authorization is required'
+  }
+  if (f.selectedProjects.length === 0) e.selectedProjects = 'Select at least one project'
   if (f.selectedRepos.length === 0) e.selectedRepos = 'Select at least one repository'
   return e
 }
@@ -655,6 +727,11 @@ const INIT_GITHUB: GitHubForm = {
   name: '', description: '', authMode: 'pat', token: '', oauthClientId: '', oauthClientSecret: '', appSlug: '', appId: '', appClientId: '', appClientSecret: '', appPrivateKey: '', transactionId: '', accountLogin: '', repoSearch: '',
   reposLoaded: false, selectedRepos: [], availableRepos: [], defaultResource: 'repos', pullRequestState: 'open', issueState: 'open', schedule: '1h',
 }
+const INIT_AZURE_DEVOPS: AzureDevOpsForm = {
+  name: '', description: '', authMode: 'pat', organization: '', pat: '', tenantId: '', clientId: '', clientSecret: '', transactionId: '', accountName: '', authMessage: '',
+  organizationsLoaded: false, availableOrganizations: [], projectsLoaded: false, availableProjects: [], selectedProjects: [], reposLoaded: false, availableRepos: [], selectedRepos: [], repoSearch: '',
+  defaultResource: 'repositories', pullRequestState: 'active', workItemState: 'Active', branchFilter: '', commitDays: '30', pipelineRunDays: '14', schedule: '1h',
+}
 
 /* ── Shared form widgets ─────────────────────────────────────────── */
 function Label({ children }: { children: React.ReactNode }) {
@@ -753,6 +830,16 @@ function AuthTabs({ value, onChange, types }: { value: string; onChange: (v: str
       ))}
     </div>
   )
+}
+
+async function readJsonSafely(response: Response): Promise<Record<string, unknown>> {
+  const text = await response.text()
+  try {
+    return text ? JSON.parse(text) as Record<string, unknown> : {}
+  } catch {
+    const snippet = text.slice(0, 120).trim()
+    throw new Error(snippet ? `Unexpected response from server: ${snippet}` : 'Unexpected empty response from server')
+  }
 }
 
 /* ── Step 0: Type Selection ──────────────────────────────────────── */
@@ -2168,7 +2255,7 @@ function GitHubConfigure({
             'x-datachef-github-pat': form.token,
           },
         })
-        const payload = await response.json()
+        const payload = await readJsonSafely(response)
         if (!response.ok) throw new Error(String(payload.error ?? 'Failed to load repositories'))
         const repos = Array.isArray(payload.repos) ? payload.repos as GitHubRepoOption[] : []
         set({ ...form, reposLoaded: true, availableRepos: repos, selectedRepos: form.selectedRepos.filter(selected => repos.some(repo => repo.fullName === selected.fullName)) })
@@ -2176,7 +2263,7 @@ function GitHubConfigure({
       }
 
       const response = await fetch(url.toString())
-      const payload = await response.json()
+      const payload = await readJsonSafely(response)
       if (!response.ok) throw new Error(String(payload.error ?? 'Failed to load repositories'))
       const repos = Array.isArray(payload.repos) ? payload.repos as GitHubRepoOption[] : []
       set({ ...form, reposLoaded: true, availableRepos: repos, selectedRepos: form.selectedRepos.filter(selected => repos.some(repo => repo.fullName === selected.fullName)) })
@@ -2215,7 +2302,7 @@ function GitHubConfigure({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const body = await response.json()
+      const body = await readJsonSafely(response)
       if (!response.ok) throw new Error(String(body.error ?? 'Failed to start GitHub authorization'))
       const targetUrl = String(body.authorizeUrl ?? body.installUrl ?? '')
       if (!targetUrl) throw new Error('GitHub authorization URL was not returned')
@@ -2230,6 +2317,7 @@ function GitHubConfigure({
     !form.repoSearch.trim() || repo.fullName.toLowerCase().includes(form.repoSearch.toLowerCase()),
   )
   const selectedSet = new Set(form.selectedRepos.map(repo => repo.fullName))
+  const allFilteredReposSelected = filteredRepos.length > 0 && filteredRepos.every(repo => selectedSet.has(repo.fullName))
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -2333,6 +2421,31 @@ function GitHubConfigure({
           <FieldRow label="Search repositories">
             <FInput value={form.repoSearch} onChange={v => ff('repoSearch', v)} placeholder="owner/repo" />
           </FieldRow>
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <button
+              type="button"
+              onClick={() => {
+                const next = allFilteredReposSelected
+                  ? form.selectedRepos.filter(item => !filteredRepos.some(repo => repo.fullName === item.fullName))
+                  : [
+                      ...form.selectedRepos,
+                      ...filteredRepos.filter(repo => !selectedSet.has(repo.fullName)),
+                    ]
+                set({ ...form, selectedRepos: next })
+              }}
+              className="px-2.5 py-1 rounded-md border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-chef-text transition-colors"
+            >
+              {allFilteredReposSelected ? 'Clear shown' : 'Select all shown'}
+            </button>
+            <button
+              type="button"
+              onClick={() => set({ ...form, selectedRepos: [] })}
+              className="px-2.5 py-1 rounded-md border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-chef-muted hover:text-chef-text transition-colors"
+            >
+              Clear all
+            </button>
+            <span className="text-chef-muted">{form.selectedRepos.length} selected</span>
+          </div>
           <div className="rounded-xl border border-chef-border overflow-hidden">
             <div className="max-h-64 overflow-y-auto divide-y divide-chef-border">
               {filteredRepos.map(repo => {
@@ -2398,6 +2511,420 @@ function GitHubConfigure({
   )
 }
 
+function AzureDevOpsConfigure({
+  form, set, errors,
+}: { form: AzureDevOpsForm; set: (f: AzureDevOpsForm) => void; errors: FieldErrors }) {
+  const [loadingCatalog, setLoadingCatalog] = useState<'organizations' | 'projects' | 'repos' | null>(null)
+  const [authBusy, setAuthBusy] = useState(false)
+  const ff = <K extends keyof AzureDevOpsForm>(k: K, v: AzureDevOpsForm[K]) => set({ ...form, [k]: v })
+
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as Record<string, unknown> | null
+      if (!data || data.source !== 'datachef-azuredevops-auth') return
+      setAuthBusy(false)
+      if (typeof data.error === 'string' && data.error) {
+        set({ ...form, authMessage: data.error })
+        return
+      }
+      set({
+        ...form,
+        transactionId: String(data.transactionId ?? ''),
+        accountName: String(data.organization ?? ''),
+        authMessage: `Authorized for ${String(data.organization ?? 'Azure DevOps organization')}`,
+        organizationsLoaded: false,
+        projectsLoaded: false,
+        reposLoaded: false,
+        availableOrganizations: [],
+        availableProjects: [],
+        availableRepos: [],
+        selectedProjects: [],
+        selectedRepos: [],
+      })
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [form, set])
+
+  async function loadOrganizations() {
+    if (form.authMode === 'pat' && (!form.pat.trim() || !form.organization.trim())) {
+      set({ ...form, authMessage: 'Enter an organization and PAT first.' })
+      return
+    }
+    if (form.authMode === 'entra' && !form.transactionId.trim()) {
+      set({ ...form, authMessage: 'Complete Microsoft authorization first.' })
+      return
+    }
+    setLoadingCatalog('organizations')
+    try {
+      let response: Response
+      if (form.authMode === 'pat') {
+        response = await fetch('/api/connectors/azuredevops/catalog', {
+          headers: {
+            'x-datachef-azuredevops-pat': form.pat,
+            'x-datachef-azuredevops-organization': form.organization,
+          },
+        })
+      } else {
+        const url = new URL('/api/connectors/azuredevops/catalog', window.location.origin)
+        url.searchParams.set('transactionId', form.transactionId)
+        response = await fetch(url.toString())
+      }
+      const payload = await readJsonSafely(response)
+      if (!response.ok) throw new Error(String(payload.error ?? 'Failed to load organizations'))
+      const orgs = Array.isArray(payload.organizations) ? payload.organizations as AzureDevOpsOrganizationOption[] : []
+      const selectedOrg = orgs.find(org => org.accountName.toLowerCase() === form.organization.toLowerCase())
+      set({
+        ...form,
+        availableOrganizations: orgs,
+        organizationsLoaded: true,
+        organization: selectedOrg?.accountName ?? form.organization,
+        authMessage: orgs.length > 0 ? `${orgs.length} accessible organizations discovered` : form.authMessage,
+      })
+    } catch (error) {
+      set({ ...form, authMessage: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setLoadingCatalog(null)
+    }
+  }
+
+  async function loadProjects() {
+    if (!form.organization.trim()) {
+      set({ ...form, authMessage: 'Enter or select an organization first.' })
+      return
+    }
+    setLoadingCatalog('projects')
+    try {
+      const url = new URL('/api/connectors/azuredevops/catalog', window.location.origin)
+      url.searchParams.set('organization', form.organization)
+      let response: Response
+      if (form.authMode === 'pat') {
+        response = await fetch(url.toString(), {
+          headers: {
+            'x-datachef-azuredevops-pat': form.pat,
+            'x-datachef-azuredevops-organization': form.organization,
+          },
+        })
+      } else {
+        if (!form.transactionId.trim()) {
+          set({ ...form, authMessage: 'Complete Microsoft authorization first.' })
+          return
+        }
+        url.searchParams.set('transactionId', form.transactionId)
+        response = await fetch(url.toString())
+      }
+      const payload = await readJsonSafely(response)
+      if (!response.ok) throw new Error(String(payload.error ?? 'Failed to load projects'))
+      const projects = Array.isArray(payload.projects) ? payload.projects as AzureDevOpsProjectOption[] : []
+      set({
+        ...form,
+        projectsLoaded: true,
+        availableProjects: projects,
+        selectedProjects: form.selectedProjects.filter(selected => projects.some(project => project.id === selected.id)),
+        reposLoaded: false,
+        availableRepos: [],
+        selectedRepos: [],
+      })
+    } catch (error) {
+      set({ ...form, authMessage: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setLoadingCatalog(null)
+    }
+  }
+
+  async function loadRepos() {
+    if (form.selectedProjects.length === 0) {
+      set({ ...form, authMessage: 'Select at least one project first.' })
+      return
+    }
+    setLoadingCatalog('repos')
+    try {
+      const url = new URL('/api/connectors/azuredevops/catalog', window.location.origin)
+      url.searchParams.set('organization', form.organization)
+      url.searchParams.set('projects', form.selectedProjects.map(project => project.id).join(','))
+      let response: Response
+      if (form.authMode === 'pat') {
+        response = await fetch(url.toString(), {
+          headers: {
+            'x-datachef-azuredevops-pat': form.pat,
+            'x-datachef-azuredevops-organization': form.organization,
+          },
+        })
+      } else {
+        if (!form.transactionId.trim()) {
+          set({ ...form, authMessage: 'Complete Microsoft authorization first.' })
+          return
+        }
+        url.searchParams.set('transactionId', form.transactionId)
+        response = await fetch(url.toString())
+      }
+      const payload = await readJsonSafely(response)
+      if (!response.ok) throw new Error(String(payload.error ?? 'Failed to load repositories'))
+      const repos = Array.isArray(payload.repositories) ? payload.repositories as AzureDevOpsRepoOption[] : []
+      set({
+        ...form,
+        reposLoaded: true,
+        availableRepos: repos,
+        selectedRepos: form.selectedRepos.filter(selected => repos.some(repo => repo.repositoryId === selected.repositoryId)),
+      })
+    } catch (error) {
+      set({ ...form, authMessage: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setLoadingCatalog(null)
+    }
+  }
+
+  async function launchEntraAuth() {
+    setAuthBusy(true)
+    try {
+      const response = await fetch('/api/connectors/azuredevops/entra/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connectorName: form.name || 'Azure DevOps',
+          connectorDescription: form.description,
+          tenantId: form.tenantId,
+          clientId: form.clientId,
+          clientSecret: form.clientSecret,
+          organization: form.organization,
+        }),
+      })
+      const payload = await readJsonSafely(response)
+      if (!response.ok) throw new Error(String(payload.error ?? 'Failed to start Azure DevOps authorization'))
+      window.open(String(payload.authorizeUrl ?? ''), 'azuredevops-auth', 'popup=yes,width=640,height=760')
+    } catch (error) {
+      setAuthBusy(false)
+      set({ ...form, authMessage: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const filteredRepos = form.availableRepos.filter(repo =>
+    !form.repoSearch.trim() || repo.fullName.toLowerCase().includes(form.repoSearch.toLowerCase()),
+  )
+  const selectedProjects = new Set(form.selectedProjects.map(project => project.id))
+  const selectedRepos = new Set(form.selectedRepos.map(repo => repo.repositoryId))
+  const allProjectsSelected = form.availableProjects.length > 0 && form.availableProjects.every(project => selectedProjects.has(project.id))
+  const allFilteredReposSelected = filteredRepos.length > 0 && filteredRepos.every(repo => selectedRepos.has(repo.repositoryId))
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => ff('name', v)} placeholder="e.g. Azure DevOps Engineering" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Description (optional)">
+        <FInput value={form.description} onChange={v => ff('description', v)} placeholder="Repositories, pull requests, work items, and pipelines" />
+      </FieldRow>
+
+      <Divider label="Authentication" />
+      <AuthTabs value={form.authMode} onChange={v => ff('authMode', v as AzureDevOpsForm['authMode'])} types={[{ id: 'pat', label: 'PAT' }, { id: 'entra', label: 'Microsoft Entra' }]} />
+      <FieldRow label="Organization" hint="Organization name or https://dev.azure.com/{org}" error={errors.organization}>
+        <FInput value={form.organization} onChange={v => ff('organization', v)} placeholder="contoso" error={errors.organization} />
+      </FieldRow>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => void loadOrganizations()} className="px-3 py-2 rounded-lg border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-sm text-chef-text transition-colors">
+          {loadingCatalog === 'organizations' ? 'Loading organizations…' : 'Discover organizations'}
+        </button>
+        {form.availableOrganizations.length > 0 && <span className="text-[11px] text-chef-muted">{form.availableOrganizations.length} organizations available</span>}
+      </div>
+      {form.organizationsLoaded && form.availableOrganizations.length > 0 && (
+        <FieldRow label="Authorized Organizations">
+          <FSelect value={form.organization} onChange={v => ff('organization', v)}>
+            <option value="">Select organization</option>
+            {form.availableOrganizations.map(org => <option key={org.accountId} value={org.accountName}>{org.accountName}</option>)}
+          </FSelect>
+        </FieldRow>
+      )}
+
+      {form.authMode === 'pat' ? (
+        <FieldRow label="Personal Access Token" error={errors.pat}>
+          <FInput type="password" value={form.pat} onChange={v => ff('pat', v)} placeholder="azdovspat..." error={errors.pat} />
+        </FieldRow>
+      ) : (
+        <div className="rounded-xl border border-chef-border bg-chef-bg p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Tenant ID" error={errors.tenantId}>
+              <FInput value={form.tenantId} onChange={v => ff('tenantId', v)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" error={errors.tenantId} />
+            </FieldRow>
+            <FieldRow label="Client ID" error={errors.clientId}>
+              <FInput value={form.clientId} onChange={v => ff('clientId', v)} placeholder="Application (client) ID" error={errors.clientId} />
+            </FieldRow>
+          </div>
+          <FieldRow label="Client Secret" error={errors.clientSecret}>
+            <FInput type="password" value={form.clientSecret} onChange={v => ff('clientSecret', v)} placeholder="••••••••" error={errors.clientSecret} />
+          </FieldRow>
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" onClick={() => void launchEntraAuth()} className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors">
+              {authBusy ? 'Waiting for Microsoft…' : 'Authorize with Microsoft'}
+            </button>
+            {form.accountName && <span className="text-[11px] text-emerald-400">Authorized for {form.accountName}</span>}
+          </div>
+          <FieldErr msg={errors.transactionId} />
+        </div>
+      )}
+
+      {form.authMessage && <div className={`text-[11px] ${form.authMessage.toLowerCase().includes('authorized') ? 'text-emerald-400' : 'text-amber-300'}`}>{form.authMessage}</div>}
+
+      <Divider label="Project Scope" />
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => void loadProjects()} className="px-3 py-2 rounded-lg border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-sm text-chef-text transition-colors">
+          {loadingCatalog === 'projects' ? 'Loading projects…' : form.projectsLoaded ? 'Refresh projects' : 'Load projects'}
+        </button>
+        {form.availableProjects.length > 0 && <span className="text-[11px] text-chef-muted">{form.availableProjects.length} projects available</span>}
+      </div>
+      {form.projectsLoaded && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <button
+              type="button"
+              onClick={() => {
+                const next = allProjectsSelected ? [] : form.availableProjects
+                set({ ...form, selectedProjects: next, reposLoaded: false, availableRepos: [], selectedRepos: [] })
+              }}
+              className="px-2.5 py-1 rounded-md border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-chef-text transition-colors"
+            >
+              {allProjectsSelected ? 'Clear all projects' : 'Select all projects'}
+            </button>
+            <span className="text-chef-muted">{form.selectedProjects.length} selected</span>
+          </div>
+          <div className="rounded-xl border border-chef-border overflow-hidden">
+            <div className="max-h-48 overflow-y-auto divide-y divide-chef-border">
+              {form.availableProjects.map(project => (
+                <label key={project.id} className="flex items-center gap-3 px-3 py-2.5 text-sm text-chef-text hover:bg-chef-bg cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedProjects.has(project.id)}
+                    onChange={event => {
+                      const next = event.target.checked
+                        ? [...form.selectedProjects, project]
+                        : form.selectedProjects.filter(item => item.id !== project.id)
+                      set({ ...form, selectedProjects: next, reposLoaded: false, availableRepos: [], selectedRepos: [] })
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{project.name}</div>
+                    <div className="text-[10px] text-chef-muted">{project.visibility ?? 'visibility n/a'}{project.description ? ` · ${project.description}` : ''}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      <FieldErr msg={errors.selectedProjects} />
+
+      <Divider label="Repository Scope" />
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => void loadRepos()} className="px-3 py-2 rounded-lg border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-sm text-chef-text transition-colors">
+          {loadingCatalog === 'repos' ? 'Loading repositories…' : form.reposLoaded ? 'Refresh repositories' : 'Load repositories'}
+        </button>
+        {form.availableRepos.length > 0 && <span className="text-[11px] text-chef-muted">{form.availableRepos.length} repositories available</span>}
+      </div>
+      {form.reposLoaded && (
+        <div className="space-y-3">
+          <FieldRow label="Search repositories">
+            <FInput value={form.repoSearch} onChange={v => ff('repoSearch', v)} placeholder="project/repository" />
+          </FieldRow>
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <button
+              type="button"
+              onClick={() => {
+                const next = allFilteredReposSelected
+                  ? form.selectedRepos.filter(item => !filteredRepos.some(repo => repo.repositoryId === item.repositoryId))
+                  : [
+                      ...form.selectedRepos,
+                      ...filteredRepos.filter(repo => !selectedRepos.has(repo.repositoryId)),
+                    ]
+                set({ ...form, selectedRepos: next })
+              }}
+              className="px-2.5 py-1 rounded-md border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-chef-text transition-colors"
+            >
+              {allFilteredReposSelected ? 'Clear shown' : 'Select all shown'}
+            </button>
+            <button
+              type="button"
+              onClick={() => set({ ...form, selectedRepos: [] })}
+              className="px-2.5 py-1 rounded-md border border-chef-border hover:border-indigo-500/30 hover:bg-chef-bg text-chef-muted hover:text-chef-text transition-colors"
+            >
+              Clear all
+            </button>
+            <span className="text-chef-muted">{form.selectedRepos.length} selected</span>
+          </div>
+          <div className="rounded-xl border border-chef-border overflow-hidden">
+            <div className="max-h-64 overflow-y-auto divide-y divide-chef-border">
+              {filteredRepos.map(repo => (
+                <label key={repo.repositoryId} className="flex items-center gap-3 px-3 py-2.5 text-sm text-chef-text hover:bg-chef-bg cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedRepos.has(repo.repositoryId)}
+                    onChange={event => {
+                      const next = event.target.checked
+                        ? [...form.selectedRepos, repo]
+                        : form.selectedRepos.filter(item => item.repositoryId !== repo.repositoryId)
+                      set({ ...form, selectedRepos: next })
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{repo.fullName}</div>
+                    <div className="text-[10px] text-chef-muted">{repo.projectName} · {repo.defaultBranch || 'default branch n/a'}</div>
+                  </div>
+                </label>
+              ))}
+              {filteredRepos.length === 0 && (
+                <div className="px-3 py-4 text-[11px] text-chef-muted">No repositories match the current search.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      <FieldErr msg={errors.selectedRepos} />
+
+      <Divider label="Defaults" />
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Default Resource">
+          <FSelect value={form.defaultResource} onChange={v => ff('defaultResource', v as AzureDevOpsForm['defaultResource'])}>
+            <option value="repositories">repositories</option>
+            <option value="commits">commits</option>
+            <option value="pullRequests">pullRequests</option>
+            <option value="branches">branches</option>
+            <option value="workItems">workItems</option>
+            <option value="pipelines">pipelines</option>
+            <option value="pipelineRuns">pipelineRuns</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Sync Interval">
+          <ScheduleSelect value={form.schedule} onChange={v => ff('schedule', v)} />
+        </FieldRow>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Pull Request State">
+          <FSelect value={form.pullRequestState} onChange={v => ff('pullRequestState', v as AzureDevOpsForm['pullRequestState'])}>
+            <option value="active">active</option>
+            <option value="completed">completed</option>
+            <option value="abandoned">abandoned</option>
+            <option value="all">all</option>
+          </FSelect>
+        </FieldRow>
+        <FieldRow label="Work Item State">
+          <FInput value={form.workItemState} onChange={v => ff('workItemState', v)} placeholder="Active" />
+        </FieldRow>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <FieldRow label="Branch Filter">
+          <FInput value={form.branchFilter} onChange={v => ff('branchFilter', v)} placeholder="main" />
+        </FieldRow>
+        <FieldRow label="Commit Days">
+          <FInput value={form.commitDays} onChange={v => ff('commitDays', v)} placeholder="30" />
+        </FieldRow>
+        <FieldRow label="Pipeline Run Days">
+          <FInput value={form.pipelineRunDays} onChange={v => ff('pipelineRunDays', v)} placeholder="14" />
+        </FieldRow>
+      </div>
+    </div>
+  )
+}
+
 /* ── Stepper ─────────────────────────────────────────────────────── */
 function Stepper({ steps, current }: { steps: string[]; current: number }) {
   return (
@@ -2444,6 +2971,7 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
   const [azureB2cForm, setAzureB2cForm] = useState<AzureB2CForm>(INIT_AZURE_B2C)
   const [azureEntraIdForm, setAzureEntraIdForm] = useState<AzureEntraIdForm>(INIT_AZURE_ENTRA_ID)
   const [githubForm, setGitHubForm] = useState<GitHubForm>(INIT_GITHUB)
+  const [azureDevOpsForm, setAzureDevOpsForm] = useState<AzureDevOpsForm>(INIT_AZURE_DEVOPS)
 
   // Lazy-init secret on mount
   useEffect(() => { setWebhookForm(f => ({ ...f, secret: genSecret() })) }, [])
@@ -2664,6 +3192,16 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         description: initialDraft.description,
         ...(initialDraft.runtimeConfig as Partial<GitHubForm>),
       })
+      return
+    }
+
+    if (initialDraft.type === 'azuredevops') {
+      setAzureDevOpsForm({
+        ...INIT_AZURE_DEVOPS,
+        name: initialDraft.name,
+        description: initialDraft.description,
+        ...(initialDraft.runtimeConfig as Partial<AzureDevOpsForm>),
+      })
     }
   }, [initialDraft])
 
@@ -2696,6 +3234,7 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
       case 'azureb2c': return azureB2cForm
       case 'azureentraid': return azureEntraIdForm
       case 'github': return githubForm
+      case 'azuredevops': return azureDevOpsForm
       default: return httpForm
     }
   }
@@ -2718,6 +3257,7 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
       case 'azureb2c': return validateAzureB2C(azureB2cForm)
       case 'azureentraid': return validateAzureEntraId(azureEntraIdForm)
       case 'github': return validateGitHub(githubForm)
+      case 'azuredevops': return validateAzureDevOps(azureDevOpsForm)
       default: return {}
     }
   }
@@ -2790,6 +3330,8 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         ? String(f.fileName || 'upload')
         : type === 'github'
         ? `github.com/${githubForm.selectedRepos[0]?.fullName ?? githubForm.accountLogin ?? 'selected-repos'}`
+        : type === 'azuredevops'
+        ? `dev.azure.com/${azureDevOpsForm.organization}/${azureDevOpsForm.selectedRepos[0]?.fullName ?? azureDevOpsForm.selectedProjects[0]?.name ?? 'selected-scope'}`
         : type === 'redis'
         ? redisForm.connectionMode === 'connectionString'
           ? redisForm.connectionString
@@ -2816,6 +3358,7 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         type === 'http'       ? (f.auth || 'None') :
         type === 'file'       ? 'Direct upload' :
         type === 'github'     ? (githubForm.authMode === 'pat' ? 'Personal access token' : githubForm.authMode === 'oauth' ? 'GitHub OAuth' : 'GitHub App installation') :
+        type === 'azuredevops'? (azureDevOpsForm.authMode === 'pat' ? 'Personal access token' : 'Microsoft Entra delegated auth') :
         type === 'redis'      ? 'Redis auth' :
         type === 'appinsights'? (aiForm.authMode === 'api_key' ? 'App Insights API key' : 'OAuth2 client_credentials') :
         type === 'azuremonitor' ? 'OAuth2 client_credentials' :
@@ -2828,11 +3371,13 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         type === 'bigquery'   ? 'Service account' :
         f.auth || f.authType || 'N/A'
       ),
-      syncInterval: String(f.schedule || (type === 'webhook' ? 'real-time' : type === 'file' ? 'manual' : type === 'github' ? githubForm.schedule : type === 'appinsights' || type === 'azuremonitor' ? 'on-demand' : type === 'azureb2c' ? azureB2cForm.schedule : type === 'azureentraid' ? azureEntraIdForm.schedule : 'manual')),
+      syncInterval: String(f.schedule || (type === 'webhook' ? 'real-time' : type === 'file' ? 'manual' : type === 'github' ? githubForm.schedule : type === 'azuredevops' ? azureDevOpsForm.schedule : type === 'appinsights' || type === 'azuremonitor' ? 'on-demand' : type === 'azureb2c' ? azureB2cForm.schedule : type === 'azureentraid' ? azureEntraIdForm.schedule : 'manual')),
       description: String(f.description || (
         ff ? `${String(ff.format).toUpperCase()} · ${ff.parsedRows.length.toLocaleString()} rows · ${ff.detectedCols.length} columns` :
         type === 'github'
           ? `GitHub ${githubForm.defaultResource} · ${githubForm.selectedRepos.length} selected repos`
+        : type === 'azuredevops'
+          ? `Azure DevOps ${azureDevOpsForm.defaultResource} · ${azureDevOpsForm.selectedProjects.length} projects · ${azureDevOpsForm.selectedRepos.length} repos`
         :
         type === 'redis'
           ? `Redis · ${redisForm.defaultQueryMode} · ${redisForm.defaultKeyPattern || '*'}`
@@ -2901,6 +3446,31 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
             pullRequestState: githubForm.pullRequestState,
             issueState: githubForm.issueState,
             schedule: githubForm.schedule,
+          }
+        : type === 'azuredevops'
+        ? {
+            organization: azureDevOpsForm.organization,
+            selectedProjects: azureDevOpsForm.selectedProjects.map(project => ({
+              id: project.id,
+              name: project.name,
+              description: project.description,
+              visibility: project.visibility,
+            })),
+            selectedRepos: azureDevOpsForm.selectedRepos.map(repo => ({
+              projectId: repo.projectId,
+              projectName: repo.projectName,
+              repositoryId: repo.repositoryId,
+              repositoryName: repo.repositoryName,
+              fullName: repo.fullName,
+              defaultBranch: repo.defaultBranch,
+            })),
+            defaultResource: azureDevOpsForm.defaultResource,
+            pullRequestState: azureDevOpsForm.pullRequestState,
+            workItemState: azureDevOpsForm.workItemState,
+            branchFilter: azureDevOpsForm.branchFilter,
+            commitDays: Number(azureDevOpsForm.commitDays || 30),
+            pipelineRunDays: Number(azureDevOpsForm.pipelineRunDays || 14),
+            schedule: azureDevOpsForm.schedule,
           }
         : type === 'elasticsearch'
         ? {
@@ -2996,6 +3566,13 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         username: githubForm.accountLogin || undefined,
       } } : {}),
       ...(type === 'github' && githubForm.authMode !== 'pat' ? { githubAuthTransactionId: githubForm.transactionId } : {}),
+      ...(type === 'azuredevops' && azureDevOpsForm.authMode === 'pat' ? { azureDevOpsCredentials: {
+        mode: 'pat' as const,
+        organization: azureDevOpsForm.organization,
+        pat: azureDevOpsForm.pat,
+        username: azureDevOpsForm.accountName || undefined,
+      } } : {}),
+      ...(type === 'azuredevops' && azureDevOpsForm.authMode !== 'pat' ? { azureDevOpsAuthTransactionId: azureDevOpsForm.transactionId } : {}),
     }
     const finalJob: ConnectorJob = {
       ...jobRef.current,
@@ -3043,6 +3620,7 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
           {step === 1 && type === 'azureb2c' && <AzureB2CConfigure form={azureB2cForm} set={setAzureB2cForm} errors={errors} />}
           {step === 1 && type === 'azureentraid' && <AzureEntraIdConfigure form={azureEntraIdForm} set={setAzureEntraIdForm} errors={errors} />}
           {step === 1 && type === 'github' && <GitHubConfigure form={githubForm} set={setGitHubForm} errors={errors} />}
+          {step === 1 && type === 'azuredevops' && <AzureDevOpsConfigure form={azureDevOpsForm} set={setAzureDevOpsForm} errors={errors} />}
           {isTest && type && (
             <TestStep
               type={type}

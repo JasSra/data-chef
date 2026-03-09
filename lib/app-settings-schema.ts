@@ -1,8 +1,25 @@
+import type { TenantContext } from '@/lib/tenant'
+
 export interface WorkspaceSettings {
   workspaceName: string
   companyName: string
   region: string
   timezone: string
+}
+
+export interface BrandingSettings {
+  productName: string
+  logoMode: 'icon' | 'wordmark' | 'both'
+  logoUrl?: string
+  faviconUrl?: string
+  primaryColor: string
+  accentColor: string
+  surfaceStyle: 'default' | 'glass' | 'contrast'
+  supportUrl?: string
+  websiteUrl?: string
+  aboutHeadline?: string
+  aboutBody?: string
+  parentCompanyLabel?: string
 }
 
 export interface OwnerSettings {
@@ -44,12 +61,14 @@ export interface NetworkDiscoverySettings {
 
 export interface AppSettings {
   setupCompleted: boolean
+  tenant: TenantContext
   workspace: WorkspaceSettings
   owner: OwnerSettings
   queryEngine: QueryEngineSettings
   apiKeys: ApiKeysSettings
   notifications: NotificationSettings
   networkDiscovery: NetworkDiscoverySettings
+  branding: BrandingSettings
   createdAt: number
   updatedAt: number
 }

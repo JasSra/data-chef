@@ -19,6 +19,8 @@ interface RunState {
   currentStep: number
   log:         { stepIndex: number; message: string; ts: number }[]
   durationMs:  number
+  stepMetrics: StepMetric[]
+  latestResult: LatestRunResult | null
 }
 
 interface UiStep {
@@ -30,12 +32,53 @@ interface UiStep {
   config: string
 }
 
-interface RecentRun { status: 'succeeded' | 'failed' }
+interface RecentRun { status: 'succeeded' | 'failed'; durationMs?: number }
+
+interface StepMetric {
+  stepIndex: number
+  stepId: string
+  label: string
+  op: string
+  rowsIn: number
+  rowsOut: number
+  removed: number
+  failed: boolean
+  failedRows: number
+  durationMs: number
+  throughputPerSec: number
+}
+
+interface RunSummary {
+  rowsIn: number
+  rowsOut: number
+  removed: number
+  failedRows: number
+  failedSteps: number
+  totalSteps: number
+  durationMs: number
+  throughputPerSec: number
+  errorRate: number
+  healthScore: number
+}
+
+interface LatestRunResult {
+  pipelineId: string
+  status: 'succeeded' | 'failed'
+  startedAt: number
+  durationMs: number
+  columns: string[]
+  rows: string[][]
+  rowCount: number
+  summary: RunSummary
+  stepMetrics: StepMetric[]
+  error?: string | null
+}
 
 interface ClientPipeline {
   id:             string
   name:           string
   description:    string
+  notes?:         string
   status:         'active' | 'draft'
   lastRun:        string
   lastRunStatus:  'succeeded' | 'failed' | 'draft'
@@ -46,6 +89,7 @@ interface ClientPipeline {
   recentRuns:     RecentRun[]
   steps:          UiStep[]
   quarantineStep: UiStep | null
+  latestRunResult?: LatestRunResult | null
 }
 
 /* ── Utilities ───────────────────────────────────────────────────────────────── */
@@ -63,8 +107,42 @@ function relTime(epochMs: number): string {
   return `${Math.round(diff / 86_400_000)}d ago`
 }
 
+function fmtPct(value: number) {
+  return `${(value * 100).toFixed(value < 0.1 ? 1 : 0)}%`
+}
+
+function stepPurpose(op: string): string {
+  switch (op) {
+    case 'extract':
+    case 'fetch':
+      return 'Loads the source rows into the pipeline runtime.'
+    case 'validate':
+      return 'Checks the incoming rows against required fields, types, or schema rules.'
+    case 'query':
+      return 'Filters or reshapes the stream using a query or expression layer.'
+    case 'map':
+      return 'Renames or remaps fields into the output shape.'
+    case 'coerce':
+      return 'Normalizes field values into explicit types before later comparisons or writes.'
+    case 'flatten':
+      return 'Expands nested objects or arrays into a flatter row shape.'
+    case 'enrich':
+      return 'Adds lookup-derived fields from another source or service.'
+    case 'dedupe':
+      return 'Removes repeated rows using a business key or window.'
+    case 'condition':
+      return 'Applies a branch or keep/drop rule based on a field comparison.'
+    case 'write':
+      return 'Prepares the final shaped output for preview or persistence.'
+    case 'quarantine':
+      return 'Captures invalid or rejected rows outside the main success path.'
+    default:
+      return 'Executes a pipeline transformation step.'
+  }
+}
+
 function initRunState(stepCount: number): RunState {
-  return { status: 'idle', stepStates: Array(stepCount).fill('idle'), currentStep: -1, log: [], durationMs: 0 }
+  return { status: 'idle', stepStates: Array(stepCount).fill('idle'), currentStep: -1, log: [], durationMs: 0, stepMetrics: [], latestResult: null }
 }
 
 /* ── Step icon ───────────────────────────────────────────────────────────────── */
@@ -92,7 +170,12 @@ function nodeStyle(base: string, run: StepStatus) {
 }
 
 /* ── DAG ─────────────────────────────────────────────────────────────────────── */
-function PipelineDAG({ pipeline, runState }: { pipeline: ClientPipeline; runState: RunState }) {
+function PipelineDAG({ pipeline, runState, selectedStepId, onSelectStep }: {
+  pipeline: ClientPipeline
+  runState: RunState
+  selectedStepId: string | null
+  onSelectStep: (stepId: string) => void
+}) {
   const { steps, quarantineStep } = pipeline
   const NODE_W = 152, NODE_H = 70, H_GAP = 56
   const svgW = steps.length * NODE_W + (steps.length - 1) * H_GAP
@@ -134,8 +217,11 @@ function PipelineDAG({ pipeline, runState }: { pipeline: ClientPipeline; runStat
           return (
             <div
               key={step.id}
-              className={`absolute border rounded-xl flex flex-col gap-1.5 px-3 py-2.5 transition-all duration-300 ${nodeStyle(step.status, rs)}`}
+              className={`absolute border rounded-xl flex flex-col gap-1.5 px-3 py-2.5 transition-all duration-300 cursor-pointer ${
+                selectedStepId === step.id ? 'ring-2 ring-indigo-500/70 ring-offset-1 ring-offset-chef-surface' : ''
+              } ${nodeStyle(step.status, rs)}`}
               style={{ left: 20 + i * (NODE_W + H_GAP), top: mainY, width: NODE_W, height: NODE_H }}
+              onClick={() => onSelectStep(step.id)}
             >
               <div className="flex items-center gap-2">
                 {rs === 'running' ? <Loader2 size={14} className="animate-spin text-indigo-300 shrink-0" /> : <StepIcon op={step.icon} />}
@@ -151,7 +237,10 @@ function PipelineDAG({ pipeline, runState }: { pipeline: ClientPipeline; runStat
 
         {quarantineStep && steps.length > 1 && (
           <div className="absolute border rounded-xl flex flex-col gap-1.5 px-3 py-2.5 border-amber-500/40 bg-amber-500/5 text-amber-300"
-            style={{ left: 20 + (NODE_W + H_GAP), top: qY, width: NODE_W, height: NODE_H }}>
+            style={{ left: 20 + (NODE_W + H_GAP), top: qY, width: NODE_W, height: NODE_H }}
+            onClick={() => onSelectStep(quarantineStep.id)}
+            role="button"
+            tabIndex={0}>
             <div className="flex items-center gap-2">
               <StepIcon op="quarantine" />
               <span className="text-[11px] font-semibold">{quarantineStep.label}</span>
@@ -192,6 +281,7 @@ export default function PipelinesPage() {
   const [pipelines, setPipelines] = useState<ClientPipeline[]>([])
   const [loading, setLoading]     = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedDagStepId, setSelectedDagStepId] = useState<string | null>(null)
   const [runState, setRunState]     = useState<RunState>(initRunState(0))
   const [showLog, setShowLog]       = useState(false)
   const logEndRef                   = useRef<HTMLDivElement>(null)
@@ -208,6 +298,7 @@ export default function PipelinesPage() {
         id: string
         name: string
         description: string
+        notes?: string
         status: 'active' | 'draft'
         avgDuration: string
         dataset: string
@@ -218,11 +309,13 @@ export default function PipelinesPage() {
         lastRunStatus: string | null
         runsToday: number
         recentRuns: { status: string }[]
+        latestRunResult?: LatestRunResult | null
       }>) => {
         setPipelines(data.map(d => ({
           id:             d.id,
           name:           d.name,
           description:    d.description,
+          notes:          d.notes ?? '',
           status:         d.status,
           avgDuration:    d.avgDuration,
           sourceType:     d.sourceType ?? 'dataset',
@@ -233,6 +326,7 @@ export default function PipelinesPage() {
           lastRunStatus:  (d.lastRunStatus ?? 'draft') as ClientPipeline['lastRunStatus'],
           runsToday:      d.runsToday,
           recentRuns:     d.recentRuns as RecentRun[],
+          latestRunResult: d.latestRunResult ?? null,
         })))
         setLoading(false)
       })
@@ -244,7 +338,14 @@ export default function PipelinesPage() {
     const p = pipelines.find(q => q.id === id)
     if (!p) return
     setSelectedId(id)
-    setRunState(initRunState(p.steps.length))
+    setSelectedDagStepId(p.steps[0]?.id ?? p.quarantineStep?.id ?? null)
+    setRunState({
+      ...initRunState(p.steps.length),
+      latestResult: p.latestRunResult ?? null,
+      stepMetrics: p.latestRunResult?.stepMetrics ?? [],
+      durationMs: p.latestRunResult?.durationMs ?? 0,
+      status: p.latestRunResult?.status ?? 'idle',
+    })
     setShowLog(false)
     abortRef.current?.abort()
   }
@@ -262,7 +363,7 @@ export default function PipelinesPage() {
     setRunState({
       status: 'running',
       stepStates: Array(currentPipeline.steps.length).fill('idle'),
-      currentStep: -1, log: [], durationMs: 0,
+      currentStep: -1, log: [], durationMs: 0, stepMetrics: [], latestResult: null,
     })
     setShowLog(true)
 
@@ -309,7 +410,22 @@ export default function PipelinesPage() {
             const idx = event.stepIndex as number
             setRunState(prev => {
               const next = [...prev.stepStates]; next[idx] = 'done'
-              return { ...prev, stepStates: next }
+              const metric: StepMetric = {
+                stepIndex: idx,
+                stepId: String(event.stepId ?? `step_${idx}`),
+                label: String(event.label ?? `Step ${idx + 1}`),
+                op: String(event.op ?? 'runtime'),
+                rowsIn: Number(event.rowsIn ?? 0),
+                rowsOut: Number(event.rowsOut ?? 0),
+                removed: Number(event.removed ?? 0),
+                failed: false,
+                failedRows: 0,
+                durationMs: Number(event.durationMs ?? 0),
+                throughputPerSec: Number(event.throughputPerSec ?? 0),
+              }
+              const metrics = [...prev.stepMetrics]
+              metrics[idx] = metric
+              return { ...prev, stepStates: next, stepMetrics: metrics }
             })
           }
 
@@ -321,10 +437,47 @@ export default function PipelinesPage() {
               for (let i = idx + 1; i < next.length; i++) next[i] = 'skip'
               return {
                 ...prev, stepStates: next,
+                stepMetrics: [
+                  ...prev.stepMetrics.filter(metric => metric.stepIndex !== idx),
+                  {
+                    stepIndex: idx,
+                    stepId: `step_${idx}`,
+                    label: String(event.label ?? `Step ${idx + 1}`),
+                    op: 'runtime',
+                    rowsIn: 0,
+                    rowsOut: 0,
+                    removed: 0,
+                    failed: true,
+                    failedRows: 0,
+                    durationMs: 0,
+                    throughputPerSec: 0,
+                  },
+                ].sort((a, b) => a.stepIndex - b.stepIndex),
                 log: [...prev.log, { stepIndex: idx, message: `❌ ${event.message as string}`, ts: Date.now() }],
               }
             })
             setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+          }
+
+          if (type === 'result') {
+            const latestResult: LatestRunResult = {
+              pipelineId: capturedId,
+              status: 'succeeded',
+              startedAt: Date.now(),
+              durationMs: Number((event.summary as RunSummary | undefined)?.durationMs ?? 0),
+              columns: (event.columns as string[]) ?? [],
+              rows: (event.rows as string[][]) ?? [],
+              rowCount: Number(event.rowCount ?? 0),
+              summary: event.summary as RunSummary,
+              stepMetrics: (event.stepMetrics as StepMetric[]) ?? [],
+              error: null,
+            }
+            setRunState(prev => ({
+              ...prev,
+              latestResult,
+              stepMetrics: latestResult.stepMetrics,
+            }))
+            setPipelines(prev => prev.map(p => p.id === capturedId ? { ...p, latestRunResult: latestResult } : p))
           }
 
           if (type === 'done') {
@@ -365,6 +518,14 @@ export default function PipelinesPage() {
       }))
     }
   }, [selectedId, runState.status, pipelines])
+
+  const latestResult = runState.latestResult ?? selected?.latestRunResult ?? null
+  const stepMetrics = runState.stepMetrics.length ? runState.stepMetrics : (latestResult?.stepMetrics ?? [])
+  const maxStepDuration = stepMetrics.reduce((max, metric) => Math.max(max, metric.durationMs), 1)
+  const maxStepVolume = stepMetrics.reduce((max, metric) => Math.max(max, metric.rowsIn, metric.rowsOut), 1)
+  const selectedDagStep = selected
+    ? [...selected.steps, ...(selected.quarantineStep ? [selected.quarantineStep] : [])].find(step => step.id === selectedDagStepId) ?? selected.steps[0] ?? selected.quarantineStep ?? null
+    : null
 
   return (
     <div className="flex h-full">
@@ -472,6 +633,11 @@ export default function PipelinesPage() {
                 )}
               </div>
               <div className="text-sm text-chef-muted mt-1">{selected.description}</div>
+              {selected.notes && (
+                <div className="mt-3 max-w-3xl whitespace-pre-wrap text-[11px] text-chef-muted leading-relaxed border border-chef-border rounded-xl bg-chef-card px-3 py-2.5">
+                  {selected.notes}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-4 mt-2 text-[11px] text-chef-muted">
                 <span className="flex items-center gap-1.5"><Database size={11} />{selected.sourceType === 'connector' ? `Connector: ${selected.dataset}` : selected.dataset}</span>
                 <span className="flex items-center gap-1.5"><Clock size={11} />Last run {selected.lastRun}</span>
@@ -530,9 +696,107 @@ export default function PipelinesPage() {
                 </div>
               </div>
               <div className="bg-chef-bg border border-chef-border rounded-xl p-6 overflow-x-auto">
-                <PipelineDAG pipeline={selected} runState={runState} />
+                <PipelineDAG
+                  pipeline={selected}
+                  runState={runState}
+                  selectedStepId={selectedDagStepId}
+                  onSelectStep={setSelectedDagStepId}
+                />
+              </div>
+              {selectedDagStep && (
+                <div className="mt-4 rounded-xl border border-chef-border bg-chef-card p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <StepIcon op={selectedDagStep.icon} size={12} />
+                    <div className="text-sm font-semibold text-chef-text">{selectedDagStep.label}</div>
+                    <div className="text-[10px] font-mono text-chef-muted">{selectedDagStep.op}</div>
+                  </div>
+                  <div className="text-[11px] text-chef-muted leading-relaxed mb-3">
+                    {stepPurpose(selectedDagStep.op)}
+                  </div>
+                  <div className="rounded-lg border border-chef-border bg-chef-bg px-3 py-2.5">
+                    <div className="text-[10px] uppercase tracking-widest text-chef-muted mb-1">Configuration</div>
+                    <div className="text-[11px] font-mono text-chef-text break-words">{selectedDagStep.config || 'No runtime summary available'}</div>
+                  </div>
+                </div>
+              )}
+              <div className="mt-3 text-[11px] text-chef-muted">
+                Click a node to inspect what it does and how it is configured.
               </div>
             </div>
+
+            {latestResult && (
+              <div className="px-6 pb-4">
+                <div className="text-sm font-semibold text-chef-text mb-3">Latest Run Snapshot</div>
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                  <div className="rounded-xl border border-chef-border bg-chef-card p-3">
+                    <div className="text-[10px] uppercase tracking-widest text-chef-muted">Rows</div>
+                    <div className="text-lg font-mono text-chef-text mt-1">{latestResult.summary.rowsOut}</div>
+                    <div className="text-[11px] text-chef-muted mt-1">from {latestResult.summary.rowsIn} input</div>
+                  </div>
+                  <div className="rounded-xl border border-chef-border bg-chef-card p-3">
+                    <div className="text-[10px] uppercase tracking-widest text-chef-muted">Throughput</div>
+                    <div className="text-lg font-mono text-emerald-400 mt-1">{latestResult.summary.throughputPerSec}/s</div>
+                    <div className="text-[11px] text-chef-muted mt-1">{fmtMs(latestResult.summary.durationMs)}</div>
+                  </div>
+                  <div className="rounded-xl border border-chef-border bg-chef-card p-3">
+                    <div className="text-[10px] uppercase tracking-widest text-chef-muted">Removed</div>
+                    <div className="text-lg font-mono text-amber-300 mt-1">{latestResult.summary.removed}</div>
+                    <div className="text-[11px] text-chef-muted mt-1">failed rows {latestResult.summary.failedRows}</div>
+                  </div>
+                  <div className="rounded-xl border border-chef-border bg-chef-card p-3">
+                    <div className="text-[10px] uppercase tracking-widest text-chef-muted">Error Rate</div>
+                    <div className="text-lg font-mono text-rose-300 mt-1">{fmtPct(latestResult.summary.errorRate)}</div>
+                    <div className="text-[11px] text-chef-muted mt-1">{latestResult.summary.failedSteps} failed steps</div>
+                  </div>
+                  <div className="rounded-xl border border-chef-border bg-chef-card p-3">
+                    <div className="text-[10px] uppercase tracking-widest text-chef-muted">Health</div>
+                    <div className="text-lg font-mono text-sky-300 mt-1">{latestResult.summary.healthScore}/100</div>
+                    <div className="mt-2 h-1.5 rounded-full bg-chef-bg overflow-hidden">
+                      <div className="h-full bg-sky-400" style={{ width: `${latestResult.summary.healthScore}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {stepMetrics.length > 0 && (
+              <div className="px-6 pb-4">
+                <div className="text-sm font-semibold text-chef-text mb-3">Step Runtime Graph</div>
+                <div className="rounded-xl border border-chef-border bg-chef-card overflow-hidden">
+                  <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_110px_110px] gap-3 px-4 py-2.5 border-b border-chef-border text-[10px] uppercase tracking-widest text-chef-muted">
+                    <div>Step</div>
+                    <div>Duration</div>
+                    <div>Volume</div>
+                    <div>Throughput</div>
+                    <div>Status</div>
+                  </div>
+                  {stepMetrics.map(metric => (
+                    <div key={metric.stepIndex} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_110px_110px] gap-3 px-4 py-3 border-b border-chef-border last:border-b-0 text-[11px]">
+                      <div className="min-w-0">
+                        <div className="text-chef-text font-semibold truncate">{metric.label}</div>
+                        <div className="text-chef-muted font-mono truncate">{metric.op}</div>
+                      </div>
+                      <div>
+                        <div className="h-2 rounded-full bg-chef-bg overflow-hidden">
+                          <div className={`h-full ${metric.failed ? 'bg-rose-400' : 'bg-indigo-400'}`} style={{ width: `${Math.max(8, (metric.durationMs / maxStepDuration) * 100)}%` }} />
+                        </div>
+                        <div className="mt-1 text-chef-muted font-mono">{fmtMs(metric.durationMs)}</div>
+                      </div>
+                      <div>
+                        <div className="h-2 rounded-full bg-chef-bg overflow-hidden">
+                          <div className={`${metric.failed ? 'bg-rose-400' : 'bg-emerald-400'} h-full`} style={{ width: `${Math.max(8, (Math.max(metric.rowsIn, metric.rowsOut) / maxStepVolume) * 100)}%` }} />
+                        </div>
+                        <div className="mt-1 text-chef-muted font-mono">{metric.rowsIn} in / {metric.rowsOut} out</div>
+                      </div>
+                      <div className="text-chef-muted font-mono">{metric.throughputPerSec}/s</div>
+                      <div className={`font-mono ${metric.failed ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {metric.failed ? 'failed' : 'ok'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Step configuration */}
             <div className="px-6 pb-4">
@@ -559,6 +823,15 @@ export default function PipelinesPage() {
                           {rs === 'running' && <span className="text-[9px] text-indigo-400 font-mono animate-pulse">running…</span>}
                         </div>
                         <div className="text-[11px] text-chef-muted mt-0.5 truncate font-mono">{step.config}</div>
+                        {stepMetrics[i] && (
+                          <div className="mt-1.5 flex flex-wrap gap-3 text-[10px] font-mono text-chef-muted">
+                            <span>{stepMetrics[i].rowsIn} in</span>
+                            <span>{stepMetrics[i].rowsOut} out</span>
+                            <span>{stepMetrics[i].removed} removed</span>
+                            <span>{fmtMs(stepMetrics[i].durationMs)}</span>
+                            <span>{stepMetrics[i].throughputPerSec}/s</span>
+                          </div>
+                        )}
                       </div>
                       {rs === 'running' && <Loader2    size={14} className="text-indigo-400 shrink-0 animate-spin" />}
                       {rs === 'done'    && <CheckCircle2  size={14} className="text-emerald-400 shrink-0" />}
@@ -607,6 +880,45 @@ export default function PipelinesPage() {
                     <div ref={logEndRef} />
                   </div>
                 )}
+              </div>
+            )}
+
+            {latestResult && (
+              <div className="px-6 pb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-semibold text-chef-text">Latest Result Preview</div>
+                  <div className="text-[11px] text-chef-muted">
+                    {latestResult.rowCount} rows {latestResult.error ? `· ${latestResult.error}` : '· stored in memory'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-chef-border bg-chef-card overflow-auto max-h-[320px]">
+                  {latestResult.columns.length === 0 ? (
+                    <div className="p-4 text-[11px] text-chef-muted">No result rows captured for the latest run.</div>
+                  ) : (
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-chef-card z-10">
+                        <tr className="border-b border-chef-border">
+                          {latestResult.columns.map(column => (
+                            <th key={column} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-chef-muted font-mono whitespace-nowrap">
+                              {column}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {latestResult.rows.map((row, rowIndex) => (
+                          <tr key={rowIndex} className="border-b border-chef-border/50 last:border-b-0">
+                            {row.map((cell, cellIndex) => (
+                              <td key={cellIndex} className="px-3 py-2 text-[11px] font-mono text-chef-text whitespace-nowrap">
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               </div>
             )}
 

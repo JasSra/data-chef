@@ -4,14 +4,23 @@ import './globals.css'
 import AppShell from '@/components/AppShell'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { SettingsProvider } from '@/components/SettingsProvider'
+import { getAppInfo } from '@/lib/app-info'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' })
 const mono  = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' })
 const display = Space_Grotesk({ subsets: ['latin'], variable: '--font-display', display: 'swap' })
 
-export const metadata: Metadata = {
-  title: 'dataChef — JSON Query & ETL Platform',
-  description: 'Ingest, query, and transform JSON data at scale',
+export async function generateMetadata(): Promise<Metadata> {
+  const appInfo = getAppInfo()
+  return {
+    title: appInfo.branding.productName,
+    description: appInfo.branding.aboutBody || 'Ingest, query, and transform operational data',
+    icons: appInfo.branding.faviconUrl ? {
+      icon: appInfo.branding.faviconUrl,
+      shortcut: appInfo.branding.faviconUrl,
+      apple: appInfo.branding.faviconUrl,
+    } : undefined,
+  }
 }
 
 // Runs synchronously before CSS paints — prevents white flash on light theme load

@@ -26,13 +26,23 @@ const navItems = [
 ]
 
 interface WorkerState { active: number; total: number; pct: number }
-interface AppInfoState { version: string; builtAt: string; attribution: { parentCompany: string; url: string } }
+interface AppInfoState {
+  name: string
+  version: string
+  builtAt: string
+  attribution: { parentCompany: string; url: string }
+}
 
 export default function Sidebar({ pathname }: { pathname: string }) {
   const [workers, setWorkers] = useState<WorkerState>({ active: 0, total: 5, pct: 0 })
   const [counts, setCounts] = useState({ datasets: 0, connections: 0 })
   const [appInfo, setAppInfo] = useState<AppInfoState | null>(null)
   const { settings } = useAppSettings()
+  const productName = settings?.branding.productName ?? appInfo?.name ?? 'dataChef'
+  const companyLabel = settings?.branding.parentCompanyLabel ?? appInfo?.attribution.parentCompany ?? 'ThreatCo'
+  const websiteUrl = settings?.branding.websiteUrl ?? appInfo?.attribution.url ?? 'https://www.threatco.io'
+  const logoUrl = settings?.branding.logoUrl ?? ''
+  const logoMode = settings?.branding.logoMode ?? 'both'
   const initials = settings?.owner.name
     .split(/\s+/)
     .map(part => part[0]?.toUpperCase())
@@ -112,13 +122,21 @@ export default function Sidebar({ pathname }: { pathname: string }) {
       <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.18),transparent_68%)] pointer-events-none" />
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-chef-border shrink-0 relative">
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-400 via-sky-500 to-blue-700 flex items-center justify-center shrink-0 shadow-lg shadow-cyan-950/30">
-          <ChefHat size={14} className="text-white" />
-        </div>
-        <div className="min-w-0">
-          <div className="font-display font-bold text-chef-text text-sm tracking-tight leading-none">dataChef</div>
-          <div className="text-[10px] text-cyan-300 font-medium leading-none mt-0.5">A ThreatCo company</div>
-        </div>
+        {logoMode !== 'wordmark' ? (
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-400 via-sky-500 to-blue-700 flex items-center justify-center shrink-0 shadow-lg shadow-cyan-950/30">
+            {logoUrl ? (
+              <img src={logoUrl} alt="" className="h-6 w-6 rounded-lg object-cover" />
+            ) : (
+              <ChefHat size={14} className="text-white" />
+            )}
+          </div>
+        ) : null}
+        {logoMode !== 'icon' ? (
+          <div className="min-w-0">
+            <div className="font-display font-bold text-chef-text text-sm tracking-tight leading-none truncate">{productName}</div>
+            <div className="text-[10px] text-cyan-300 font-medium leading-none mt-0.5 truncate">{companyLabel}</div>
+          </div>
+        ) : null}
       </div>
 
       {/* Workspace indicator */}
@@ -126,7 +144,7 @@ export default function Sidebar({ pathname }: { pathname: string }) {
           <div className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />
           <div className="min-w-0">
           <div className="text-xs font-medium text-chef-text truncate">{settings?.workspace.workspaceName ?? 'workspace'}</div>
-          <div className="text-[10px] text-chef-muted">{settings?.workspace.region ?? 'region'}</div>
+          <div className="text-[10px] text-chef-muted">{settings?.tenant.region ?? settings?.workspace.region ?? 'region'} data residency</div>
         </div>
       </div>
 
@@ -203,15 +221,15 @@ export default function Sidebar({ pathname }: { pathname: string }) {
         <div className="rounded-xl border border-chef-border bg-chef-card/60 p-2.5">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-cyan-300">
             <ShieldCheck size={11} />
-            <span>ThreatCo</span>
+            <span>{companyLabel}</span>
           </div>
           <a
-            href="https://www.threatco.io"
+            href={websiteUrl}
             target="_blank"
             rel="noreferrer"
             className="mt-2 flex items-center gap-1 text-[11px] text-chef-text hover:text-cyan-300 transition-colors"
           >
-            <span>www.threatco.io</span>
+            <span>{websiteUrl.replace(/^https?:\/\//, '')}</span>
             <ExternalLink size={11} />
           </a>
           {appInfo && (

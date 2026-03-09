@@ -7,6 +7,7 @@
 import type { ConnectorId } from '@/components/ConnectorWizard'
 import { readJsonFile, writeJsonFile } from '@/lib/json-store'
 import { decryptSecret, encryptSecret, isEncryptedValue } from '@/lib/secret-crypto'
+import { invalidateSearchIndex } from '@/lib/search-cache'
 
 export interface SyncRecord {
   ts:         number   // epoch ms
@@ -61,6 +62,7 @@ export interface ConnectorTransferRecord {
   azureB2cCredentials?: AzureB2CCredentials
   azureEntraIdCredentials?: AzureEntraIdCredentials
   githubCredentials?: GitHubCredentials
+  azureDevOpsCredentials?: AzureDevOpsCredentials
 }
 
 /* ── Display helpers ─────────────────────────────────────────────── */
@@ -133,6 +135,22 @@ export interface AzureB2CCredentials {
 
 export interface AzureEntraIdCredentials extends AzureB2CCredentials {}
 
+export interface AzureDevOpsProjectSelection {
+  id: string
+  name: string
+  description?: string
+  visibility?: string
+}
+
+export interface AzureDevOpsRepoSelection {
+  projectId: string
+  projectName: string
+  repositoryId: string
+  repositoryName: string
+  fullName: string
+  defaultBranch?: string
+}
+
 export interface GitHubRepoSelection {
   owner: string
   repo: string
@@ -168,6 +186,36 @@ export type GitHubCredentials =
       privateKey: string
       installationId: number
       accountLogin?: string
+    }
+
+export type AzureDevOpsResource =
+  | 'repositories'
+  | 'commits'
+  | 'pullRequests'
+  | 'branches'
+  | 'workItems'
+  | 'pipelines'
+  | 'pipelineRuns'
+
+export type AzureDevOpsCredentials =
+  | {
+      mode: 'pat'
+      organization: string
+      pat: string
+      username?: string
+    }
+  | {
+      mode: 'entra'
+      tenantId: string
+      clientId: string
+      clientSecret: string
+      organization: string
+      accessToken: string
+      refreshToken: string
+      expiresAt: number
+      scope: string
+      tokenType: string
+      accountName?: string
     }
 
 export type ObservabilityCredentials =
@@ -216,6 +264,7 @@ interface ConnectorStateFile {
   azureB2cCredsById: Record<string, AzureB2CCredentials>
   azureEntraIdCredsById: Record<string, AzureEntraIdCredentials>
   githubCredsById: Record<string, GitHubCredentials>
+  azureDevOpsCredsById: Record<string, AzureDevOpsCredentials>
 }
 
 const CONNECTOR_STORE_FILE = 'connectors.json'
@@ -229,6 +278,7 @@ function seedState(): ConnectorStateFile {
     azureB2cCredsById: {},
     azureEntraIdCredsById: {},
     githubCredsById: {},
+    azureDevOpsCredsById: {},
   }
 }
 
@@ -257,6 +307,9 @@ function cloneState(state: ConnectorStateFile): ConnectorStateFile {
     githubCredsById: Object.fromEntries(
       Object.entries(state.githubCredsById ?? {}).map(([id, creds]) => [id, { ...creds }]),
     ),
+    azureDevOpsCredsById: Object.fromEntries(
+      Object.entries(state.azureDevOpsCredsById ?? {}).map(([id, creds]) => [id, { ...creds }]),
+    ),
   }
 }
 
@@ -267,6 +320,7 @@ function readState(): ConnectorStateFile {
 
 function writeState(state: ConnectorStateFile): void {
   writeJsonFile(CONNECTOR_STORE_FILE, state)
+  invalidateSearchIndex()
 }
 
 function makeImportedId(baseId?: string): string {
@@ -324,6 +378,40 @@ function decodeGitHubCreds(creds: GitHubCredentials): GitHubCredentials {
         ...creds,
         clientSecret: maybeDecrypt(creds.clientSecret),
         privateKey: maybeDecrypt(creds.privateKey),
+      }
+  }
+}
+
+function encodeAzureDevOpsCreds(creds: AzureDevOpsCredentials): AzureDevOpsCredentials {
+  switch (creds.mode) {
+    case 'pat':
+      return {
+        ...creds,
+        pat: encryptSecret(creds.pat) as unknown as string,
+      }
+    case 'entra':
+      return {
+        ...creds,
+        clientSecret: encryptSecret(creds.clientSecret) as unknown as string,
+        accessToken: encryptSecret(creds.accessToken) as unknown as string,
+        refreshToken: creds.refreshToken ? (encryptSecret(creds.refreshToken) as unknown as string) : '',
+      }
+  }
+}
+
+function decodeAzureDevOpsCreds(creds: AzureDevOpsCredentials): AzureDevOpsCredentials {
+  switch (creds.mode) {
+    case 'pat':
+      return {
+        ...creds,
+        pat: maybeDecrypt(creds.pat),
+      }
+    case 'entra':
+      return {
+        ...creds,
+        clientSecret: maybeDecrypt(creds.clientSecret),
+        accessToken: maybeDecrypt(creds.accessToken),
+        refreshToken: creds.refreshToken ? maybeDecrypt(creds.refreshToken) : '',
       }
   }
 }
@@ -412,6 +500,18 @@ export function getGitHubCreds(id: string): GitHubCredentials | null {
   return creds ? decodeGitHubCreds(creds) : null
 }
 
+export function setAzureDevOpsCreds(id: string, creds: AzureDevOpsCredentials): void {
+  const state = readState()
+  state.azureDevOpsCredsById[id] = encodeAzureDevOpsCreds(creds)
+  writeState(state)
+}
+
+export function getAzureDevOpsCreds(id: string): AzureDevOpsCredentials | null {
+  const state = readState()
+  const creds = state.azureDevOpsCredsById[id]
+  return creds ? decodeAzureDevOpsCreds(creds) : null
+}
+
 export function setConnectorRuntimeConfig(id: string, config: ConnectorRuntimeConfig): void {
   const state = readState()
   state.runtimeConfigById[id] = { ...config }
@@ -489,6 +589,7 @@ export function exportConnector(id: string): ConnectorTransferRecord | null {
     azureB2cCredentials: state.azureB2cCredsById[id] ? { ...state.azureB2cCredsById[id] } : undefined,
     azureEntraIdCredentials: state.azureEntraIdCredsById[id] ? { ...state.azureEntraIdCredsById[id] } : undefined,
     githubCredentials: state.githubCredsById[id] ? decodeGitHubCreds(state.githubCredsById[id]) : undefined,
+    azureDevOpsCredentials: state.azureDevOpsCredsById[id] ? decodeAzureDevOpsCreds(state.azureDevOpsCredsById[id]) : undefined,
   }
 }
 
@@ -591,6 +692,10 @@ export function importConnectors(records: ConnectorTransferRecord[]): ConnectorR
 
     if (record.type === 'github' && record.githubCredentials) {
       state.githubCredsById[id] = encodeGitHubCreds(record.githubCredentials)
+    }
+
+    if (record.type === 'azuredevops' && record.azureDevOpsCredentials) {
+      state.azureDevOpsCredsById[id] = encodeAzureDevOpsCreds(record.azureDevOpsCredentials)
     }
 
     imported.push(connector)

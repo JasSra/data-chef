@@ -31,8 +31,10 @@ import {
   resolveAzureB2CResource,
   resolveAzureEntraIdResource,
 } from '@/lib/azure-graph'
+import { getAzureDevOpsAuthTransaction } from '@/lib/azure-devops-auth'
 import { getGitHubAuthTransaction } from '@/lib/github-auth'
-import { getGitHubCreds, type GitHubCredentials } from '@/lib/connectors'
+import { getAzureDevOpsCreds, getGitHubCreds, type AzureDevOpsCredentials, type GitHubCredentials } from '@/lib/connectors'
+import { listAzureDevOpsProjects, listAzureDevOpsRepositories, validateAzureDevOpsCredentials } from '@/lib/azure-devops'
 import { listAccessibleGitHubRepos, validateGitHubCredentials } from '@/lib/github'
 
 export const dynamic = 'force-dynamic'
@@ -219,6 +221,15 @@ function getSimLogs(type: string, b: Record<string, unknown>): SimEntry[] {
         { level: 'info', msg: authMode === 'pat' ? 'Validating GitHub personal access token' : authMode === 'oauth' ? 'Validating GitHub OAuth grant' : 'Validating GitHub App installation', delay: 420 },
         { level: 'info', msg: 'Listing accessible repositories', delay: 480 },
         { level: 'success', msg: 'GitHub API responded · connector runtime ready', delay: 360 },
+      ]
+    }
+    case 'azuredevops': {
+      const authMode = str(b.azureDevOpsAuthMode, 'pat')
+      return [
+        { level: 'info', msg: 'Resolving dev.azure.com', delay: 320 },
+        { level: 'info', msg: authMode === 'pat' ? 'Validating Azure DevOps personal access token' : 'Validating Microsoft Entra delegated grant', delay: 460 },
+        { level: 'info', msg: 'Enumerating organization, projects, and repositories', delay: 520 },
+        { level: 'success', msg: 'Azure DevOps API responded · connector runtime ready', delay: 360 },
       ]
     }
     default:
@@ -638,6 +649,65 @@ export async function POST(req: NextRequest) {
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e)
             controller.enqueue(sse({ type: 'log', level: 'error', msg: `GitHub probe error: ${msg}` }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
+        } else if (connectorType === 'azuredevops') {
+          const authMode = String(body.azureDevOpsAuthMode ?? body.authMode ?? 'pat')
+          let credentials: AzureDevOpsCredentials | null = null
+
+          if (authMode === 'pat') {
+            const pat = String(body.pat ?? '')
+            const organization = String(body.organization ?? '')
+            if (!pat || !organization) {
+              controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Azure DevOps PAT and organization are required' }))
+              controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+              return
+            }
+            credentials = { mode: 'pat', pat, organization }
+          } else if (body.transactionId) {
+            credentials = getAzureDevOpsAuthTransaction(String(body.transactionId))?.credentials ?? null
+          } else if (body.connectorId) {
+            credentials = getAzureDevOpsCreds(String(body.connectorId))
+          }
+
+          if (!credentials) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Azure DevOps authorization is required before testing this connector' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+
+          const organization = String(body.organization ?? credentials.organization ?? '')
+          if (!organization) {
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: 'Azure DevOps organization is required' }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: 0 }))
+            return
+          }
+
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: 'Resolving dev.azure.com' }))
+          await sleep(180)
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: credentials.mode === 'pat' ? 'Preparing Azure DevOps PAT probe' : 'Preparing Azure DevOps delegated auth probe' }))
+          try {
+            const validation = await validateAzureDevOpsCredentials(credentials)
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Authenticated for ${validation.organizations.length} accessible organization${validation.organizations.length === 1 ? '' : 's'}` }))
+            const projects = await listAzureDevOpsProjects(credentials, organization)
+            controller.enqueue(sse({ type: 'log', level: 'info', msg: `${projects.length} project${projects.length === 1 ? '' : 's'} discovered in ${organization}` }))
+            const repositories = projects.length > 0
+              ? await listAzureDevOpsRepositories(credentials, organization, projects.slice(0, 10).map(project => ({
+                  id: project.id,
+                  name: project.name,
+                  description: project.description,
+                  visibility: project.visibility,
+                })))
+              : []
+            controller.enqueue(sse({ type: 'log', level: 'info', msg: `${repositories.length} repositories discovered across selected projects` }))
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: 'Connection verified · Azure DevOps API responded' }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg: `Azure DevOps probe error: ${msg}` }))
             controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
             return
           }

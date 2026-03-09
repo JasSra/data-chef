@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PIPELINES, buildPipelineResponse, addPipeline, updatePipeline } from '@/lib/pipelines'
+import { getPipelines, buildPipelineResponse, addPipeline, updatePipeline } from '@/lib/pipelines'
 import type { StepDef, UiStep, RuntimeStep } from '@/lib/pipelines'
 import type { SourceType } from '@/lib/datasets'
 
 export const dynamic = 'force-dynamic'
 
 export function GET() {
-  return NextResponse.json(PIPELINES.map(buildPipelineResponse))
+  return NextResponse.json(getPipelines().map(buildPipelineResponse))
 }
 
 const OP_DURATIONS: Record<string, number> = {
@@ -55,10 +55,11 @@ interface BuilderStepBody {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { id, name, description, dataset, sourceType, sourceId, resource, outputTarget, status, steps } = body as {
+  const { id, name, description, notes, dataset, sourceType, sourceId, resource, outputTarget, status, steps } = body as {
     id?: string
     name: string
     description: string
+    notes?: string
     dataset: string
     sourceType?: SourceType
     sourceId?: string
@@ -104,6 +105,7 @@ export async function POST(req: NextRequest) {
     const updated = updatePipeline(id, {
       name: name || 'Untitled Pipeline',
       description,
+      notes: notes ?? '',
       dataset: resolvedSourceId,
       sourceType: resolvedSourceType,
       sourceId: resolvedSourceId,
@@ -124,6 +126,7 @@ export async function POST(req: NextRequest) {
   const pipeline = addPipeline({
     name:        name || 'Untitled Pipeline',
     description: description || '',
+    notes:       notes ?? '',
     dataset:     resolvedSourceId || '',
     sourceType:  resolvedSourceType,
     sourceId:    resolvedSourceId,

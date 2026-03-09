@@ -3,6 +3,8 @@ import { getAppInfo } from '@/lib/app-info'
 
 export default function AboutPage() {
   const appInfo = getAppInfo()
+  const headline = appInfo.branding.aboutHeadline || 'Data operations workspace'
+  const aboutBody = appInfo.branding.aboutBody || 'Ingest, query, and transform operational data from APIs, databases, and observability systems.'
   const builtLabel = new Date(appInfo.builtAt).toLocaleString('en-AU', {
     year: 'numeric',
     month: 'long',
@@ -19,14 +21,13 @@ export default function AboutPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
                 <ShieldCheck size={12} />
-                ThreatCo portfolio product
+                {appInfo.attribution.parentCompany} portfolio product
               </div>
               <h1 className="mt-5 font-display text-4xl font-bold tracking-tight text-chef-text md:text-5xl">
-                dataChef
+                {appInfo.name}
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-7 text-chef-text-dim">
-                dataChef is the data ingestion, transformation, and query workspace now operated under ThreatCo. The
-                product combines live connectors, exploratory querying, and pipeline execution in a single operator-facing surface.
+                {headline}. {aboutBody}
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <a
@@ -35,7 +36,7 @@ export default function AboutPage() {
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-200 hover:bg-cyan-400/15 transition-colors"
                 >
-                  Visit ThreatCo
+                  Visit {appInfo.attribution.parentCompany}
                   <ExternalLink size={14} />
                 </a>
               </div>
@@ -65,17 +66,17 @@ export default function AboutPage() {
             {
               icon: Building2,
               title: 'Parent company',
-              body: 'ThreatCo is the parent company and primary brand for the product going forward.',
+              body: `${appInfo.attribution.parentCompany} provides the default platform branding and support surface for this tenant.`,
             },
             {
               icon: Cpu,
-              title: 'What dataChef does',
-              body: 'Connect APIs and databases, build datasets, run queries, and orchestrate repeatable pipelines.',
+              title: `What ${appInfo.name} does`,
+              body: `${appInfo.name} connects APIs and databases, builds datasets, runs queries, and orchestrates repeatable pipelines.`,
             },
             {
               icon: Clock3,
               title: 'Release visibility',
-              body: 'Version and build time are surfaced directly in the app shell so operators can confirm what is running.',
+              body: `Version and build time are surfaced directly in the app shell so operators can confirm what is running in ${appInfo.tenant.slug}.`,
             },
           ].map(item => (
             <div key={item.title} className="rounded-[22px] border border-chef-border bg-chef-card/80 p-6">

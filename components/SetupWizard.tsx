@@ -16,6 +16,7 @@ function slugify(value: string): string {
 
 export default function SetupWizard() {
   const { settings, loading, saveSettings } = useAppSettings()
+  const productName = settings?.branding.productName ?? 'dataChef'
   const [step, setStep] = useState(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -92,7 +93,7 @@ export default function SetupWizard() {
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-900/50">
               <ChefHat size={24} className="text-white" />
             </div>
-            <h2 className="mt-5 text-2xl font-semibold text-white">Set up dataChef</h2>
+            <h2 className="mt-5 text-2xl font-semibold text-white">Set up {productName}</h2>
             <p className="mt-2 text-sm text-slate-300 leading-relaxed">
               This runs once, writes to real app settings, and preloads sane defaults so the workspace is usable immediately.
             </p>
@@ -116,7 +117,7 @@ export default function SetupWizard() {
               <div>
                 <div className="text-sm font-medium text-indigo-300">Step 1</div>
                 <h3 className="mt-2 text-2xl font-semibold text-white">Name the workspace</h3>
-                <p className="mt-2 text-sm text-slate-400">These values drive the shell labels, workspace settings, and ownership defaults.</p>
+                <p className="mt-2 text-sm text-slate-400">These values drive the shell labels, tenant settings, and ownership defaults.</p>
                 <div className="mt-8 grid gap-5">
                   <label className="block">
                     <div className="text-xs font-medium text-slate-300 mb-2">Company name</div>
@@ -144,6 +145,7 @@ export default function SetupWizard() {
                       <select value={region} onChange={(e) => setRegion(e.target.value)} className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-indigo-400/60">
                         {REGION_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
+                      <div className="mt-2 text-[11px] leading-relaxed text-slate-400">Region controls where this tenant&apos;s data is stored and processed. Timezone is configured separately below.</div>
                     </label>
                     <label className="block">
                       <div className="text-xs font-medium text-slate-300 mb-2">Timezone</div>
@@ -205,7 +207,7 @@ export default function SetupWizard() {
               <div>
                 <div className="text-sm font-medium text-indigo-300">Step 4</div>
                 <h3 className="mt-2 text-2xl font-semibold text-white">Network discovery</h3>
-                <p className="mt-2 text-sm text-slate-400">Opt in if you want dataChef to scan your local/private network for connector candidates like PostgreSQL, MySQL, MongoDB, SFTP, and S3-compatible storage.</p>
+                <p className="mt-2 text-sm text-slate-400">Opt in if you want {productName} to scan your local/private network for connector candidates like PostgreSQL, MySQL, MongoDB, SFTP, and S3-compatible storage.</p>
                 <div className="mt-8 space-y-4">
                   <button
                     type="button"

@@ -46,10 +46,15 @@ interface DiscoveryOverview {
   candidates: DiscoveryCandidate[]
 }
 
+function isKnownConnectorType(value: string): value is ConnectorId {
+  return value in TYPE_CFG
+}
+
 /* ── Type config ─────────────────────────────────────────────────── */
 const TYPE_CFG: Record<ConnectorId, { Icon?: React.ElementType; brandClass?: string; color: string; bg: string; border: string; label: string }> = {
   http:       { Icon: Globe,     color: 'text-sky-400',     bg: 'bg-sky-500/10',     border: 'border-sky-500/20',    label: 'HTTP API' },
   github:     { brandClass: 'fa-brands fa-github', color: 'text-zinc-200', bg: 'bg-zinc-500/10', border: 'border-zinc-500/20', label: 'GitHub' },
+  azuredevops:{ brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-200', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', label: 'Azure DevOps' },
   webhook:    { Icon: Webhook,   color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/20',  label: 'Webhook' },
   s3:         { Icon: Cloud,     color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/20', label: 'S3' },
   sftp:       { Icon: Server,    color: 'text-slate-400',   bg: 'bg-slate-500/10',   border: 'border-slate-500/20',  label: 'SFTP' },
@@ -67,6 +72,37 @@ const TYPE_CFG: Record<ConnectorId, { Icon?: React.ElementType; brandClass?: str
   azureentraid:{ brandClass: 'fa-brands fa-microsoft', color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/20', label: 'Azure Entra ID' },
 }
 
+function getTypeConfig(type: string) {
+  return TYPE_CFG[type as ConnectorId] ?? {
+    Icon: Globe,
+    color: 'text-chef-muted',
+    bg: 'bg-chef-bg',
+    border: 'border-chef-border',
+    label: type,
+  }
+}
+
+function normalizeConnection(raw: Partial<Connection> & { id: string; name: string; type: string }): Connection {
+  const status: ConnStatus = raw.status === 'running' || raw.status === 'disconnected' ? raw.status : 'connected'
+  const type = raw.type as ConnectorId
+
+  return {
+    id: raw.id,
+    name: raw.name,
+    type,
+    status,
+    lastSync: raw.lastSync ?? 'Never',
+    recordsSynced: raw.recordsSynced ?? '—',
+    authMethod: raw.authMethod ?? 'Unknown',
+    endpoint: raw.endpoint ?? '',
+    description: raw.description ?? `${getTypeConfig(raw.type).label} connector`,
+    datasets: Array.isArray(raw.datasets) ? raw.datasets : [],
+    syncInterval: raw.syncInterval ?? 'Manual',
+    latencyMs: typeof raw.latencyMs === 'number' ? raw.latencyMs : 0,
+    sparkValues: Array.isArray(raw.sparkValues) ? raw.sparkValues : [],
+  }
+}
+
 /* ── Sparkline (values = last N record counts from real sync history) */
 function Sparkline({ values, color }: { values: number[]; color: string }) {
   const pts = values.length > 0 ? values : [0]
@@ -77,7 +113,7 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 }
 
 const SPARK_COLORS: Record<ConnectorId, string> = {
-  http: '#38bdf8', github: '#d4d4d8', webhook: '#fbbf24', s3: '#a78bfa', sftp: '#94a3b8',
+  http: '#38bdf8', github: '#d4d4d8', azuredevops: '#67e8f9', webhook: '#fbbf24', s3: '#a78bfa', sftp: '#94a3b8',
   postgresql: '#60a5fa', mysql: '#fb923c', mongodb: '#34d399', redis: '#f87171', bigquery: '#fb7185',
   file:        '#a3e635',
   appinsights: '#22d3ee',
@@ -92,7 +128,7 @@ const SPARK_COLORS: Record<ConnectorId, string> = {
 function ConnCard({ conn, selected, onClick, onSync }: {
   conn: Connection; selected: boolean; onClick: () => void; onSync: () => void
 }) {
-  const tc = TYPE_CFG[conn.type]
+  const tc = getTypeConfig(conn.type)
   return (
     <div
       onClick={onClick}
@@ -124,7 +160,7 @@ function ConnCard({ conn, selected, onClick, onSync }: {
               <Play size={9} /> {conn.type === 'file' ? 'Re-upload' : 'Sync now'}
             </button>
           </div>
-          <Sparkline values={conn.sparkValues} color={SPARK_COLORS[conn.type]} />
+          <Sparkline values={conn.sparkValues} color={SPARK_COLORS[conn.type] ?? '#94a3b8'} />
         </div>
       )}
       {conn.status === 'disconnected' && (
@@ -149,7 +185,7 @@ function DiscoveryCard({
   onDismiss: () => void
   onRestore: () => void
 }) {
-  const tc = TYPE_CFG[candidate.type]
+  const tc = getTypeConfig(candidate.type)
   const Icon = tc.Icon
 
   return (
@@ -248,7 +284,7 @@ function JobsPanel({ jobs, onClose }: { jobs: ConnectorJob[]; onClose: () => voi
             <div className="p-4 text-center text-[11px] text-chef-muted">No jobs yet</div>
           )}
           {jobs.map(j => {
-            const tc = TYPE_CFG[j.connectorType]
+            const tc = getTypeConfig(j.connectorType)
             return (
               <button key={j.id} onClick={() => setSelected(j.id)}
                 className={`w-full flex flex-col gap-1.5 p-3 border-b border-chef-border text-left transition-colors ${selected === j.id ? 'bg-indigo-500/5' : 'hover:bg-chef-card'}`}>
@@ -317,9 +353,12 @@ function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit
   onEdit: () => void
   onClose: () => void
 }) {
-  const tc = TYPE_CFG[conn.type]
+  const tc = getTypeConfig(conn.type)
   const [copied, setCopied] = useState(false)
-  function copy() { navigator.clipboard.writeText(conn.endpoint).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 2000) }
+  const endpoint = conn.endpoint ?? ''
+  const datasets = Array.isArray(conn.datasets) ? conn.datasets : []
+
+  function copy() { navigator.clipboard.writeText(endpoint).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 2000) }
 
   return (
     <div className="flex flex-col h-full overflow-auto animate-slide-in">
@@ -386,10 +425,10 @@ function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit
       <div className="px-5 py-4 space-y-3.5">
         <div className="text-xs font-semibold text-chef-text">Configuration</div>
         {[
-          { label: 'Endpoint',       value: conn.endpoint,                        mono: true },
-          { label: 'Auth method',    value: conn.authMethod,                      mono: false },
-          { label: 'Sync interval',  value: conn.syncInterval,                    mono: false },
-          { label: 'Linked datasets',value: conn.datasets.join(', ') || 'None',  mono: true },
+          { label: 'Endpoint',       value: endpoint || '—',                      mono: true },
+          { label: 'Auth method',    value: conn.authMethod || 'Unknown',         mono: false },
+          { label: 'Sync interval',  value: conn.syncInterval || 'Manual',        mono: false },
+          { label: 'Linked datasets',value: datasets.join(', ') || 'None',        mono: true },
         ].map(({ label, value, mono }) => (
           <div key={label} className="flex items-start gap-4">
             <div className="text-[11px] text-chef-muted w-28 shrink-0 pt-0.5">{label}</div>
@@ -417,7 +456,7 @@ function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit
           {conn.type === 'webhook' && (
             <div className="flex items-center gap-2"><CheckCircle2 size={11} className="text-emerald-400 shrink-0" /><span>Signature verification · replay protection active</span></div>
           )}
-          {(conn.type === 'sftp' && conn.endpoint.startsWith('ftp://')) && (
+          {(conn.type === 'sftp' && endpoint.startsWith('ftp://')) && (
             <div className="flex items-center gap-2"><AlertTriangle size={11} className="text-amber-400 shrink-0" /><span>FTP is unencrypted — migrate to SFTP</span></div>
           )}
           {conn.type === 'azureb2c' && (
@@ -460,9 +499,10 @@ export default function ConnectionsPage() {
   const loadConnectors = useCallback(async () => {
     try {
       const res = await fetch('/api/connectors')
-      const data = await res.json() as Connection[]
-      setConns(data)
-      setSelected(prev => prev ? data.find(conn => conn.id === prev.id) ?? null : null)
+      const data = await res.json() as Array<Partial<Connection> & { id: string; name: string; type: string }>
+      const normalized = Array.isArray(data) ? data.map(normalizeConnection) : []
+      setConns(normalized)
+      setSelected(prev => prev ? normalized.find(conn => conn.id === prev.id) ?? null : null)
     } finally {
       setLoading(false)
     }
@@ -495,7 +535,7 @@ export default function ConnectionsPage() {
   const dismissedDiscovery = (discovery?.candidates ?? []).filter(candidate => candidate.status === 'dismissed')
 
   const filtered = filter === 'all' ? conns : conns.filter(c => c.type === filter)
-  const filterTypes: FilterType[] = ['all', ...Array.from(new Set(conns.map(c => c.type)))]
+  const filterTypes: FilterType[] = ['all', ...Array.from(new Set(conns.map(c => c.type).filter(isKnownConnectorType)))]
 
   function downloadJsonFile(filename: string, payload: unknown) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
@@ -527,7 +567,7 @@ export default function ConnectionsPage() {
       if (!res.ok) throw new Error(data.error ?? 'Import failed')
       await loadConnectors()
       if (Array.isArray(data.connectors) && data.connectors.length > 0) {
-        setSelected(data.connectors[0] as Connection)
+        setSelected(normalizeConnection(data.connectors[0] as Partial<Connection> & { id: string; name: string; type: string }))
       }
       showNotice('success', successMessage ?? `Imported ${data.imported} connector${data.imported === 1 ? '' : 's'}`)
     } catch (err) {
@@ -723,8 +763,8 @@ async function cloneConnector(conn: Connection) {
               setConns(prev => prev.map(c => {
                 if (c.id !== conn.id) return c
                 const updatedSpark = newRecords
-                  ? [...c.sparkValues.slice(-11), newRecords]
-                  : c.sparkValues
+                  ? [...(Array.isArray(c.sparkValues) ? c.sparkValues : []).slice(-11), newRecords]
+                  : (Array.isArray(c.sparkValues) ? c.sparkValues : [])
                 return {
                   ...c, status: 'connected', lastSync: 'just now',
                   recordsSynced: newRecords ? `${newRecords.toLocaleString()} records` : c.recordsSynced,
@@ -768,6 +808,10 @@ async function cloneConnector(conn: Connection) {
       ...(newConn.observabilityCredentials ? { observabilityCredentials: newConn.observabilityCredentials } : {}),
       ...(newConn.azureB2cCredentials ? { azureB2cCredentials: newConn.azureB2cCredentials } : {}),
       ...(newConn.azureEntraIdCredentials ? { azureEntraIdCredentials: newConn.azureEntraIdCredentials } : {}),
+      ...(newConn.githubCredentials ? { githubCredentials: newConn.githubCredentials } : {}),
+      ...(newConn.githubAuthTransactionId ? { githubAuthTransactionId: newConn.githubAuthTransactionId } : {}),
+      ...(newConn.azureDevOpsCredentials ? { azureDevOpsCredentials: newConn.azureDevOpsCredentials } : {}),
+      ...(newConn.azureDevOpsAuthTransactionId ? { azureDevOpsAuthTransactionId: newConn.azureDevOpsAuthTransactionId } : {}),
     }
     let conn: Connection
     try {
@@ -775,15 +819,19 @@ async function cloneConnector(conn: Connection) {
         method: newConn.existingConnectorId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      conn = await res.json() as Connection
-    } catch {
-      conn = {
+      const payload = await res.json() as Connection & { error?: string }
+      if (!res.ok) throw new Error(payload.error ?? 'Connector create failed')
+      conn = payload as Connection
+      conn = normalizeConnection(conn)
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Connector create failed')
+      conn = normalizeConnection({
         id: newConn.id, name: newConn.name, type: newConn.type,
         status: 'connected', lastSync: 'just now', recordsSynced: '—',
         authMethod: newConn.authMethod, endpoint: newConn.endpoint,
         description: String(body.description ?? ''), datasets: [],
         syncInterval: newConn.syncInterval, latencyMs: 0, sparkValues: [],
-      }
+      })
     }
     setConns(prev => newConn.existingConnectorId
       ? prev.map(existing => existing.id === conn.id ? conn : existing)
@@ -1007,7 +1055,7 @@ async function cloneConnector(conn: Connection) {
           {filterTypes.map(t => (
             <button key={t} onClick={() => setFilter(t)}
               className={`shrink-0 text-[11px] font-medium px-3 py-1 rounded-full transition-colors capitalize ${filter === t ? 'bg-indigo-500/15 text-indigo-400' : 'text-chef-muted hover:text-chef-text'}`}>
-              {t === 'all' ? 'All types' : TYPE_CFG[t as ConnectorId].label}
+              {t === 'all' ? 'All types' : (TYPE_CFG[t as ConnectorId]?.label ?? t)}
             </button>
           ))}
         </div>

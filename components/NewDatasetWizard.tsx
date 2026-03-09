@@ -203,6 +203,11 @@ function StepConfigure({
           GitHub resources: <span className="font-mono">repos</span>, <span className="font-mono">pullRequests?state=open</span>, or <span className="font-mono">issues?state=open</span>. Repository allowlists come from the connector, not the dataset resource field.
         </div>
       )}
+      {source === 'conn' && form.connection && connectors.find(c => c.id === form.connection)?.type === 'azuredevops' && (
+        <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[11px] text-sky-200">
+          Azure DevOps resources: <span className="font-mono">repositories</span>, <span className="font-mono">branches</span>, <span className="font-mono">commits?days=30</span>, <span className="font-mono">pullRequests?state=active</span>, <span className="font-mono">workItems?state=Active</span>, <span className="font-mono">pipelines</span>, or <span className="font-mono">pipelineRuns?days=14</span>. Organization, project, and repository allowlists come from the connector.
+        </div>
+      )}
       <FieldRow label="Dataset Name">
         <Input placeholder="e.g. my-api-data" {...f('name')} />
       </FieldRow>

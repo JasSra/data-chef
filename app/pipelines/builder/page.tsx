@@ -61,10 +61,39 @@ interface ConnectorMeta {
   type: string
 }
 
+interface RuntimeStepRecord {
+  id: string
+  op: string
+  label: string
+  config: BuilderStepConfig
+}
+
+interface PipelineTemplate {
+  version: 1
+  name: string
+  description: string
+  notes: string
+  status: 'active' | 'draft'
+  source: {
+    sourceType: 'dataset' | 'connector'
+    sourceName: string
+    resource?: string
+  }
+  outputTarget: {
+    mode: 'none' | 'dataset'
+    datasetId?: string
+    datasetName?: string
+    refreshMode?: 'manual' | 'scheduled'
+    refreshIntervalMinutes?: number | null
+  } | null
+  steps: RuntimeStepRecord[]
+}
+
 interface BuilderState {
   pipelineId:     string | null
   name:           string
   description:    string
+  notes:          string
   sourceType:     'dataset' | 'connector'
   dataset:        string
   resource?:      string
@@ -109,6 +138,8 @@ function defaultConfig(op: OpType): BuilderStepConfig {
 }
 
 function configSummary(op: OpType, c: BuilderStepConfig): string {
+  const requirement = stepRequirementMessage(op, c)
+  if (requirement) return requirement
   switch (op) {
     case 'extract':   return `${c.sourceType ?? 'http'} · ${(c.format ?? 'json').toUpperCase()}`
     case 'validate':  return `${c.validateMode ?? 'strict'}${c.quarantine ? ' · quarantine' : ''}`
@@ -124,6 +155,90 @@ function configSummary(op: OpType, c: BuilderStepConfig): string {
       if (c.targetDatasetId) return '→ refresh dataset'
       return `${c.destType ?? 'S3'} · ${c.destFormat ?? 'parquet'}`
   }
+}
+
+function stepRequirementMessage(op: OpType, config: BuilderStepConfig): string | null {
+  switch (op) {
+    case 'extract':
+      return !String(config.url ?? '').trim() ? 'Add source endpoint or connection string' : null
+    case 'validate':
+      return !String(config.schemaText ?? '').trim() ? 'Import or define schema checks' : null
+    case 'query':
+      return !String(config.queryText ?? '').trim() ? 'Add query or filter expression' : null
+    case 'map':
+      return (config.mappings ?? []).some(mapping => mapping.from && mapping.to) ? null : 'Add at least one field mapping'
+    case 'coerce':
+      return !String(config.coerceField ?? '').trim() ? 'Pick a field to cast' : null
+    case 'flatten':
+      return !String(config.flattenField ?? '').trim() ? 'Pick a field to flatten' : null
+    case 'enrich':
+      return !String(config.lookupUrl ?? '').trim() || !String(config.joinKey ?? '').trim()
+        ? 'Set lookup URL and join key'
+        : null
+    case 'dedupe':
+      return !String(config.dedupeKey ?? '').trim() ? 'Choose a dedupe key' : null
+    case 'condition':
+      return !String(config.conditionField ?? '').trim() ? 'Choose a field for branching' : null
+    case 'write':
+      if (config.createDataset) return null
+      if (config.targetDatasetId) return null
+      return !String(config.destPath ?? '').trim() ? 'Choose output target or dataset' : null
+    default:
+      return null
+  }
+}
+
+const NODE_GUIDES: Record<OpType, { purpose: string; example: string; tips: string[] }> = {
+  extract: {
+    purpose: 'Pull rows directly from an endpoint or source connection as part of the pipeline.',
+    example: 'Use this only when the source selector is not enough and the pipeline itself must fetch from HTTP, S3, or a database.',
+    tips: ['Most pipelines should start from the top-level source node.', 'This node is best for special fetch workflows, not ordinary dataset selection.'],
+  },
+  validate: {
+    purpose: 'Check that required fields and types exist before downstream transforms assume they are valid.',
+    example: 'Schema example: `id: string`, `createdDateTime: timestamp`, `identities: array`.',
+    tips: ['Use strict mode for curated outputs.', 'Use quarantine when you want bad rows separated instead of aborting the flow.'],
+  },
+  query: {
+    purpose: 'Filter, project, aggregate, or reshape rows using SQL, JSONPath, JMESPath, or KQL.',
+    example: "SQL example: `SELECT id, userPrincipalName FROM upstream WHERE accountEnabled = true ORDER BY createdDateTime DESC`",
+    tips: ['Use SQL or KQL for tabular filtering and sorting.', 'Use JSONPath or JMESPath when you need to extract nested JSON fragments directly.'],
+  },
+  map: {
+    purpose: 'Rename and curate fields into business-facing output columns.',
+    example: 'Map `$.identities_issuerAssignedId` to `identityKey` and `$.enrich_domain` to `identityDomain`.',
+    tips: ['Use this after flatten or enrich.', 'A final map step makes the dataset much easier to explain.'],
+  },
+  coerce: {
+    purpose: 'Normalize one field into a known type before comparison or writing.',
+    example: 'Convert `$.createdDateTime` to `timestamp` before sorting or comparing dates.',
+    tips: ['Coerce before filters that depend on numeric or date comparisons.', 'Failed casts become null.'],
+  },
+  flatten: {
+    purpose: 'Expand nested JSON arrays or objects into a shape later nodes can treat like ordinary columns and rows.',
+    example: 'Array flatten on `$.identities` creates one row per identity; object flatten then exposes `identities_signInType`, `identities_issuerAssignedId`, etc.',
+    tips: ['Use array mode to explode lists.', 'Use object mode to expose nested keys as columns.'],
+  },
+  enrich: {
+    purpose: 'Call an HTTP endpoint to derive extra metadata for each row.',
+    example: 'Enrich a sign-in ID to derive domain, tenant, or synthetic/test-user flags.',
+    tips: ['Use explicit enrich fields to keep output understandable.', 'The URL can accept the row value through `?value=` or `{{value}}`.'],
+  },
+  dedupe: {
+    purpose: 'Collapse repeated events or identities down to one row per logical key.',
+    example: 'Dedupe on `$.signInId` for identity pipelines or `$.orderId` for log/event pipelines.',
+    tips: ['Use after flatten/query when the row grain is already correct.', 'Pick a key that really represents one business entity.'],
+  },
+  condition: {
+    purpose: 'Apply a readable if/else gate to keep only rows matching a rule.',
+    example: 'Keep rows where `$.accountEnabled == true` or where `$.status >= 500`.',
+    tips: ['Think of this as a branch/filter node.', 'Use true/false branch labels to document intent even when the runtime currently filters rows.'],
+  },
+  write: {
+    purpose: 'Mark the final shaped output of the pipeline and prepare it for preview or an optional sink.',
+    example: 'Use this as the last semantic step before the output node so the run page shows the finished dataset shape.',
+    tips: ['Place this last.', 'Use the output node plus preview to validate final shape before running.'],
+  },
 }
 
 function dependsOnSourceDataset(op: OpType): boolean {
@@ -338,6 +453,8 @@ function QueryConfig({ config, onChange, datasets, schemaFields }: {
           spellCheck={false} />
       </Field>
       <div className="text-[10px] text-chef-muted bg-chef-bg border border-chef-border rounded-lg p-2.5 leading-relaxed">
+        This node is your filter/reshape step. Use it to reduce rows, project columns, aggregate, or branch the pipeline before later nodes.
+        <br />
         Use <span className="text-indigo-300 font-mono">$.</span> to reference fields:
         {' '}<span className="text-cyan-300 font-mono">$.amount</span>,
         {' '}<span className="text-cyan-300 font-mono">$.customer.name</span>,
@@ -735,6 +852,7 @@ function ConditionConfig({ config, onChange, schemaFields }: {
       </div>
       <div className="text-[10px] text-chef-muted bg-chef-bg border border-chef-border rounded-lg p-2.5 leading-relaxed">
         Rows matching the condition follow the <span className="text-emerald-400">true</span> branch. Others follow the <span className="text-rose-400">false</span> branch or are dropped.
+        Use this as a row-level filter gate: for example, <span className="text-cyan-300 font-mono">$.status == active</span> or <span className="text-cyan-300 font-mono">$.amount &gt; 100</span>.
       </div>
     </>
   )
@@ -859,95 +977,116 @@ function buildArrows(n: number): Arrow[] {
   return arrows
 }
 
-function CanvasNode({ step, index, total, selected, posX, posY, onSelect, onMoveLeft, onMoveRight, onDelete }: {
-  step: BuilderStep; index: number; total: number; selected: boolean
+type CanvasItem =
+  | { id: '__source__'; kind: 'source'; label: string; summary: string }
+  | { id: '__output__'; kind: 'output'; label: string; summary: string }
+  | { id: string; kind: 'step'; step: BuilderStep }
+
+function CanvasNode({ item, index, total, selected, posX, posY, onSelect, onMoveLeft, onMoveRight, onDelete }: {
+  item: CanvasItem; index: number; total: number; selected: boolean
   posX: number; posY: number
   onSelect: () => void; onMoveLeft: () => void; onMoveRight: () => void; onDelete: () => void
 }) {
-  const accent = opAccent(step.op)
-  const isCondition = step.op === 'condition'
+  const step = item.kind === 'step' ? item.step : null
+  const canMoveLeft = item.kind === 'step' && index > 1
+  const canMoveRight = item.kind === 'step' && index < total - 2
+  const accent = item.kind === 'source'
+    ? 'text-sky-400 border-sky-500/50 bg-sky-500/10'
+    : item.kind === 'output'
+    ? 'text-emerald-400 border-emerald-500/50 bg-emerald-500/10'
+    : opAccent(step!.op)
+  const isCondition = step?.op === 'condition'
 
   return (
     <div
-      className={`absolute group cursor-pointer transition-all duration-150 rounded-xl border ${
-        selected
-          ? 'ring-2 ring-indigo-500 ring-offset-1 ring-offset-chef-surface border-indigo-500/60 bg-indigo-500/10 shadow-[0_0_16px_rgba(99,102,241,0.25)]'
-          : isCondition
-          ? 'border-rose-500/30 bg-rose-500/5 hover:border-rose-500/50 hover:bg-rose-500/8'
-          : 'border-chef-border bg-chef-card hover:border-chef-border-dim hover:bg-chef-card-hover'
-      }`}
-      style={{ left: posX, top: posY, width: NODE_W, height: NODE_H }}
-      onClick={onSelect}
+      className="absolute group"
+      style={{ left: posX, top: posY - 28, width: NODE_W, height: NODE_H + 28 }}
     >
       {/* hover controls */}
-      <div className="absolute -top-7 left-0 right-0 hidden group-hover:flex items-center justify-end gap-1 px-1">
-        <button onClick={e => { e.stopPropagation(); onMoveLeft() }} disabled={index === 0}
+      <div className="absolute top-0 left-0 right-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 flex items-center justify-end gap-1 px-1 transition-opacity">
+        <button onClick={e => { e.stopPropagation(); onMoveLeft() }} disabled={!canMoveLeft}
           className="w-5 h-5 flex items-center justify-center rounded text-chef-muted hover:text-chef-text hover:bg-chef-card border border-chef-border disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
           <ChevronLeft size={10} />
         </button>
-        <button onClick={e => { e.stopPropagation(); onMoveRight() }} disabled={index === total - 1}
+        <button onClick={e => { e.stopPropagation(); onMoveRight() }} disabled={!canMoveRight}
           className="w-5 h-5 flex items-center justify-center rounded text-chef-muted hover:text-chef-text hover:bg-chef-card border border-chef-border disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
           <ChevronRight size={10} />
         </button>
-        <button onClick={e => { e.stopPropagation(); onDelete() }}
+        <button onClick={e => { e.stopPropagation(); onDelete() }} disabled={item.kind !== 'step'}
           className="w-5 h-5 flex items-center justify-center rounded text-chef-muted hover:text-rose-400 hover:bg-rose-500/10 border border-chef-border transition-colors">
           <X size={10} />
         </button>
       </div>
 
-      {/* step number badge */}
-      <div className="absolute -top-2 -left-2 w-5 h-5 rounded-full bg-chef-surface border border-chef-border text-[9px] font-mono text-chef-muted flex items-center justify-center z-10">
-        {index + 1}
-      </div>
-
-      {/* condition branch labels below node */}
-      {isCondition && (
-        <div className="absolute -bottom-5 left-0 right-0 flex justify-between px-2">
-          <span className="text-[9px] text-emerald-400 font-mono">T: {step.config.trueBranch || 'Pass'}</span>
-          <span className="text-[9px] text-rose-400 font-mono">F: {step.config.falseBranch || 'Drop'}</span>
+      <div
+        className={`absolute inset-x-0 top-7 cursor-pointer transition-all duration-150 rounded-xl border ${
+          selected
+            ? 'ring-2 ring-indigo-500 ring-offset-1 ring-offset-chef-surface border-indigo-500/60 bg-indigo-500/10 shadow-[0_0_16px_rgba(99,102,241,0.25)]'
+            : isCondition
+            ? 'border-rose-500/30 bg-rose-500/5 hover:border-rose-500/50 hover:bg-rose-500/8'
+            : 'border-chef-border bg-chef-card hover:border-chef-border-dim hover:bg-chef-card-hover'
+        }`}
+        style={{ height: NODE_H }}
+        onClick={onSelect}
+      >
+        {/* step number badge */}
+        <div className="absolute -top-2 -left-2 w-5 h-5 rounded-full bg-chef-surface border border-chef-border text-[9px] font-mono text-chef-muted flex items-center justify-center z-10">
+          {index + 1}
         </div>
-      )}
 
-      {/* content */}
-      <div className="px-3 py-2.5 h-full flex flex-col justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`shrink-0 ${accent.split(' ')[0]}`}>
-            <OpIcon op={step.op} className="w-3.5 h-3.5" />
-          </span>
-          <span className="text-[11px] font-semibold text-chef-text leading-tight truncate">{step.label}</span>
-        </div>
-        <div className={`self-start text-[9px] font-mono px-1.5 py-0.5 rounded border ${accent}`}>{step.op}</div>
-        <div className={`text-[9px] leading-tight truncate font-mono ${step.invalidated ? 'text-amber-300' : 'text-chef-muted'}`}>
-          {step.invalidated ? 'Needs review after source change' : configSummary(step.op, step.config)}
+        {/* condition branch labels below node */}
+        {isCondition && step && (
+          <div className="absolute -bottom-5 left-0 right-0 flex justify-between px-2">
+            <span className="text-[9px] text-emerald-400 font-mono">T: {step.config.trueBranch || 'Pass'}</span>
+            <span className="text-[9px] text-rose-400 font-mono">F: {step.config.falseBranch || 'Drop'}</span>
+          </div>
+        )}
+
+        {/* content */}
+        <div className="px-3 py-2.5 h-full flex flex-col justify-between">
+          <div className="flex items-center gap-2">
+            <span className={`shrink-0 ${accent.split(' ')[0]}`}>
+              {item.kind === 'step'
+                ? <OpIcon op={step!.op} className="w-3.5 h-3.5" />
+                : item.kind === 'source'
+                ? <Database className="w-3.5 h-3.5" />
+                : <Eye className="w-3.5 h-3.5" />}
+            </span>
+            <span className="text-[11px] font-semibold text-chef-text leading-tight truncate">{item.kind === 'step' ? step!.label : item.label}</span>
+          </div>
+          <div className={`self-start text-[9px] font-mono px-1.5 py-0.5 rounded border ${accent}`}>
+            {item.kind === 'step' ? step!.op : item.kind}
+          </div>
+          <div className={`text-[9px] leading-tight truncate font-mono ${step?.invalidated ? 'text-amber-300' : 'text-chef-muted'}`}>
+            {item.kind === 'step'
+              ? (step!.invalidated ? 'Needs review after source change' : configSummary(step!.op, step!.config))
+              : item.summary}
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
-function BuilderCanvas({ steps, selectedId, onSelect, onReorder, onDelete }: {
+function BuilderCanvas({ sourceType, sourceLabel, steps, selectedId, onSelect, onReorder, onDelete }: {
+  sourceType: 'dataset' | 'connector'
+  sourceLabel: string
   steps: BuilderStep[]; selectedId: string | null
   onSelect: (id: string) => void; onReorder: (from: number, dir: 'left' | 'right') => void; onDelete: (id: string) => void
 }) {
-  if (steps.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="border-2 border-dashed border-chef-border rounded-2xl px-12 py-10 text-center max-w-xs">
-          <GripVertical size={28} className="text-chef-muted mx-auto mb-3 opacity-40" />
-          <div className="text-sm font-semibold text-chef-text mb-1">No steps yet</div>
-          <div className="text-xs text-chef-muted leading-relaxed">Click an operation from the left panel to add your first step</div>
-        </div>
-      </div>
-    )
-  }
+  const items: CanvasItem[] = [
+    { id: '__source__', kind: 'source', label: sourceType === 'connector' ? 'Connector Source' : 'Dataset Source', summary: sourceLabel || 'Select a source above' },
+    ...steps.map(step => ({ id: step.id, kind: 'step', step }) as CanvasItem),
+    { id: '__output__', kind: 'output', label: 'Preview Output', summary: steps.length ? 'Select to inspect full pipeline output' : 'Add steps to shape the final output' },
+  ]
 
-  const numRows = Math.ceil(steps.length / COLS)
+  const numRows = Math.ceil(items.length / COLS)
   const canvasW = COLS * NODE_W + (COLS - 1) * H_GAP
   const quarantineIndex = steps.findIndex(step => step.op === 'validate' && step.config.quarantine)
   const quarantineStep = quarantineIndex >= 0 ? steps[quarantineIndex] : null
-  const quarantinePos = quarantineStep ? nodePos(quarantineIndex) : null
+  const quarantinePos = quarantineStep ? nodePos(quarantineIndex + 1) : null
   const canvasH = numRows * NODE_H + (numRows - 1) * V_GAP + (quarantineStep ? NODE_H + 56 : 0)
-  const arrows  = buildArrows(steps.length)
+  const arrows  = buildArrows(items.length)
 
   return (
     <div className="overflow-auto pb-6">
@@ -980,16 +1119,16 @@ function BuilderCanvas({ steps, selectedId, onSelect, onReorder, onDelete }: {
           )}
         </svg>
 
-        {steps.map((step, i) => {
+        {items.map((item, i) => {
           const pos = nodePos(i)
           return (
-            <CanvasNode key={step.id}
-              step={step} index={i} total={steps.length} selected={step.id === selectedId}
+            <CanvasNode key={item.id}
+              item={item} index={i} total={items.length} selected={item.id === selectedId}
               posX={pos.x} posY={pos.y + PAD_T}
-              onSelect={() => onSelect(step.id)}
-              onMoveLeft={() => onReorder(i, 'left')}
-              onMoveRight={() => onReorder(i, 'right')}
-              onDelete={() => onDelete(step.id)} />
+              onSelect={() => onSelect(item.id)}
+              onMoveLeft={() => item.kind === 'step' && onReorder(i - 1, 'left')}
+              onMoveRight={() => item.kind === 'step' && onReorder(i - 1, 'right')}
+              onDelete={() => item.kind === 'step' && onDelete(item.id)} />
           )
         })}
         {quarantinePos && (
@@ -1051,6 +1190,64 @@ function ConfigPanel({ step, schemaFields, datasets, onLabelChange, onConfigChan
         {step.op === 'dedupe'    && <DedupeConfig    config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'condition' && <ConditionConfig config={step.config} onChange={onConfigChange} schemaFields={schemaFields} />}
         {step.op === 'write'     && <WriteConfig     config={step.config} onChange={onConfigChange} datasets={datasets} />}
+        <div className="mt-4 rounded-xl border border-chef-border bg-chef-card px-3 py-3 text-[11px] leading-relaxed">
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted mb-2">How To Use This Node</div>
+          <div className="text-chef-text mb-2">{NODE_GUIDES[step.op].purpose}</div>
+          <div className="text-chef-muted mb-2">
+            <span className="text-chef-text">Example:</span> {NODE_GUIDES[step.op].example}
+          </div>
+          <div className="space-y-1 text-chef-muted">
+            {NODE_GUIDES[step.op].tips.map(tip => <div key={tip}>- {tip}</div>)}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SourcePanel({ builder, sourceName }: { builder: BuilderState; sourceName: string }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-3.5 border-b border-chef-border shrink-0">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="p-1.5 rounded-lg border text-sky-400 border-sky-500/50 bg-sky-500/10"><Database className="w-3.5 h-3.5" /></span>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded border text-sky-400 border-sky-500/50 bg-sky-500/10">source</span>
+        </div>
+        <div className="text-sm font-semibold text-chef-text">Pipeline source</div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 text-[11px] leading-relaxed">
+        <div className="rounded-xl border border-chef-border bg-chef-card px-3 py-2.5">
+          <div className="text-[10px] uppercase tracking-widest text-chef-muted mb-1">Selected source</div>
+          <div className="text-chef-text font-mono">{sourceName || 'Choose a dataset or connector in the header'}</div>
+          <div className="text-chef-muted mt-1">{builder.sourceType === 'connector' ? 'Connector' : 'Dataset'}{builder.resource ? ` · resource: ${builder.resource}` : ''}</div>
+        </div>
+        <div className="text-chef-muted">
+          The first node is always the source anchor. Pick the dataset or connector in the header, then add transform nodes after it.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OutputPanel({ hasSteps }: { hasSteps: boolean }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-3.5 border-b border-chef-border shrink-0">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="p-1.5 rounded-lg border text-emerald-400 border-emerald-500/50 bg-emerald-500/10"><Eye className="w-3.5 h-3.5" /></span>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded border text-emerald-400 border-emerald-500/50 bg-emerald-500/10">output</span>
+        </div>
+        <div className="text-sm font-semibold text-chef-text">Final pipeline output</div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 text-[11px] leading-relaxed">
+        <div className="rounded-xl border border-chef-border bg-chef-card px-3 py-2.5 text-chef-muted">
+          {hasSteps
+            ? 'Selecting this node makes the preview panel render the full pipeline result and any final-step errors.'
+            : 'Add at least one step to preview transformed output here.'}
+        </div>
+        <div className="text-chef-muted">
+          Use this node when you want to validate the end-to-end pipeline output instead of inspecting one intermediate step.
+        </div>
       </div>
     </div>
   )
@@ -1208,8 +1405,8 @@ function BuilderInner() {
   const editId       = searchParams.get('id')
 
   const [builder, setBuilder] = useState<BuilderState>({
-    pipelineId: null, name: '', description: '', sourceType: 'dataset', dataset: '', resource: '',
-    status: 'draft', steps: [], selectedStepId: null,
+    pipelineId: null, name: '', description: '', notes: '', sourceType: 'dataset', dataset: '', resource: '',
+    status: 'draft', steps: [], selectedStepId: '__source__',
     previewOpen: true, saving: false, dirty: false,
   })
   const [datasets, setDatasets]         = useState<DatasetMeta[]>([])
@@ -1222,10 +1419,11 @@ function BuilderInner() {
   const invalidatedCount                = builder.steps.filter(step => step.invalidated).length
   const sourceCacheRef                  = useRef<{ rows: SourceRow[]; dataset: string; size: SampleSize } | null>(null)
   const previewTimer                    = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const importFileRef                   = useRef<HTMLInputElement>(null)
 
   // ── Undo / redo history ────────────────────────────────────────────────────
   const MAX_HISTORY = 50
-  type Snapshot = Pick<BuilderState, 'name' | 'description' | 'sourceType' | 'dataset' | 'resource' | 'status' | 'steps'>
+  type Snapshot = Pick<BuilderState, 'name' | 'description' | 'notes' | 'sourceType' | 'dataset' | 'resource' | 'status' | 'steps'>
   const historyRef    = useRef<Snapshot[]>([])
   const futureRef     = useRef<Snapshot[]>([])
   const builderRef    = useRef<BuilderState>(builder)
@@ -1237,8 +1435,8 @@ function BuilderInner() {
   builderRef.current = builder
 
   function snapshot(): Snapshot {
-    const { name, description, sourceType, dataset, resource, status, steps } = builderRef.current
-    return { name, description, sourceType, dataset, resource, status, steps }
+    const { name, description, notes, sourceType, dataset, resource, status, steps } = builderRef.current
+    return { name, description, notes, sourceType, dataset, resource, status, steps }
   }
 
   /** Push current state onto the undo stack.
@@ -1324,6 +1522,7 @@ function BuilderInner() {
         id: string
         name: string
         description: string
+        notes?: string
         dataset: string
         sourceType?: 'dataset' | 'connector'
         sourceId?: string
@@ -1331,9 +1530,12 @@ function BuilderInner() {
         outputTarget?: { mode: 'none' | 'dataset'; datasetId?: string; datasetName?: string } | null
         status: 'active' | 'draft'
         uiSteps: { id: string; op: string; label: string }[]
+        runtimeSteps?: RuntimeStepRecord[]
       }) => {
+        const runtimeById = new Map((data.runtimeSteps ?? []).map(step => [step.id, step]))
         const nextSteps = data.uiSteps.map(s => {
-          const config = defaultConfig(s.op as OpType)
+          const runtime = runtimeById.get(s.id)
+          const config = runtime ? { ...runtime.config } : defaultConfig(s.op as OpType)
           if (s.op === 'write' && data.outputTarget?.mode === 'dataset') {
             if (data.outputTarget.datasetId) {
               config.targetDatasetId = data.outputTarget.datasetId
@@ -1347,12 +1549,14 @@ function BuilderInner() {
         })
         setBuilder(prev => ({
           ...prev,
-          pipelineId: data.id, name: data.name, description: data.description,
+          pipelineId: data.id, name: data.name, description: data.description, notes: data.notes ?? '',
           sourceType: data.sourceType ?? 'dataset',
           dataset: data.sourceId ?? data.dataset,
           resource: data.resource ?? '',
           status: data.status,
           steps: nextSteps,
+          selectedStepId: nextSteps[0]?.id ?? '__source__',
+          dirty: false,
         }))
       })
       .catch(() => {})
@@ -1392,7 +1596,9 @@ function BuilderInner() {
       setPreview(p => ({ ...p, loading: false, error: `Select a ${b.sourceType} to preview the pipeline` }))
       return
     }
-    const idx = b.steps.findIndex(s => s.id === b.selectedStepId)
+    const idx = b.selectedStepId === '__output__'
+      ? b.steps.length - 1
+      : b.steps.findIndex(s => s.id === b.selectedStepId)
     // -1 = no step selected → show raw source data (stepIndex -1 skips all transforms)
     const effectiveIdx = idx  // may be -1, which is fine
 
@@ -1453,7 +1659,18 @@ function BuilderInner() {
   function addStep(op: OpType) {
     pushHistory()  // snapshot before mutation
     const step: BuilderStep = { id: uid(), op, label: defaultLabel(op), config: defaultConfig(op) }
-    setBuilder(prev => ({ ...prev, steps: [...prev.steps, step], selectedStepId: step.id, dirty: true }))
+    setBuilder(prev => {
+      let insertAt = prev.steps.length
+      if (prev.selectedStepId === '__source__') insertAt = 0
+      else if (prev.selectedStepId === '__output__' || !prev.selectedStepId) insertAt = prev.steps.length
+      else {
+        const currentIndex = prev.steps.findIndex(existing => existing.id === prev.selectedStepId)
+        insertAt = currentIndex >= 0 ? currentIndex + 1 : prev.steps.length
+      }
+      const steps = [...prev.steps]
+      steps.splice(insertAt, 0, step)
+      return { ...prev, steps, selectedStepId: step.id, dirty: true }
+    })
   }
 
   function reorderStep(from: number, dir: 'left' | 'right') {
@@ -1471,7 +1688,7 @@ function BuilderInner() {
     setBuilder(prev => ({
       ...prev,
       steps: prev.steps.filter(s => s.id !== id),
-      selectedStepId: prev.selectedStepId === id ? (prev.steps[0]?.id ?? null) : prev.selectedStepId,
+      selectedStepId: prev.selectedStepId === id ? '__output__' : prev.selectedStepId,
       dirty: true,
     }))
   }
@@ -1502,6 +1719,11 @@ function BuilderInner() {
     setBuilder(prev => ({ ...prev, description, dirty: true }))
   }
 
+  function updateNotes(notes: string) {
+    pushHistory(false)
+    setBuilder(prev => ({ ...prev, notes, dirty: true }))
+  }
+
   function updateDataset(dataset: string) {
     pushHistory()
     setBuilder(prev => {
@@ -1509,6 +1731,7 @@ function BuilderInner() {
       return {
         ...prev,
         dataset,
+        selectedStepId: '__source__',
         steps: invalidateStepsForDatasetChange(prev.steps, prev.dataset, dataset),
         dirty: true,
       }
@@ -1522,6 +1745,7 @@ function BuilderInner() {
       sourceType,
       dataset: sourceType === 'dataset' ? (datasets[0]?.id ?? '') : (connectors[0]?.id ?? ''),
       resource: '',
+      selectedStepId: '__source__',
       steps: invalidateStepsForDatasetChange(prev.steps, prev.dataset, sourceType === 'dataset' ? (datasets[0]?.id ?? '') : (connectors[0]?.id ?? '')),
       dirty: true,
     }))
@@ -1535,6 +1759,102 @@ function BuilderInner() {
   function updateStatus() {
     pushHistory()
     setBuilder(prev => ({ ...prev, status: prev.status === 'active' ? 'draft' : 'active', dirty: true }))
+  }
+
+  function toPortableTemplate(): PipelineTemplate {
+    const sourceName = builder.sourceType === 'dataset'
+      ? (datasets.find(dataset => dataset.id === builder.dataset)?.name ?? builder.dataset)
+      : (connectors.find(connector => connector.id === builder.dataset)?.name ?? builder.dataset)
+
+    return {
+      version: 1,
+      name: builder.name || 'Untitled Pipeline',
+      description: builder.description,
+      notes: builder.notes,
+      status: builder.status,
+      source: {
+        sourceType: builder.sourceType,
+        sourceName,
+        resource: builder.resource,
+      },
+      outputTarget: (() => {
+        const writeStep = [...builder.steps].reverse().find(step => step.op === 'write')
+        if (!writeStep) return null
+        if (writeStep.config.createDataset) {
+          return {
+            mode: 'dataset' as const,
+            datasetName: writeStep.config.newDatasetName?.trim() || `${builder.name || 'Pipeline'} output`,
+            refreshMode: 'manual' as const,
+          }
+        }
+        if (writeStep.config.targetDatasetId) {
+          const dataset = datasets.find(entry => entry.id === writeStep.config.targetDatasetId)
+          return {
+            mode: 'dataset' as const,
+            datasetName: dataset?.name ?? '',
+            refreshMode: 'manual' as const,
+          }
+        }
+        return { mode: 'none' as const }
+      })(),
+      steps: builder.steps.map(step => ({ id: step.id, op: step.op, label: step.label, config: step.config })),
+    }
+  }
+
+  function applyImportedTemplate(template: PipelineTemplate) {
+    const sourceType = template.source?.sourceType === 'connector' ? 'connector' : 'dataset'
+    const matchedSource = sourceType === 'dataset'
+      ? datasets.find(dataset => dataset.name === template.source.sourceName || dataset.id === template.source.sourceName)
+      : connectors.find(connector => connector.name === template.source.sourceName || connector.id === template.source.sourceName)
+    const nextSteps = template.steps.map(step => ({
+      id: uid(),
+      op: step.op as OpType,
+      label: step.label,
+      config: { ...defaultConfig(step.op as OpType), ...step.config },
+      invalidated: false,
+    }))
+
+    if (!matchedSource) {
+      setSaveError(`Imported pipeline source "${template.source.sourceName}" was not found locally. Source binding was cleared.`)
+    } else {
+      setSaveError(null)
+    }
+
+    setBuilder(prev => ({
+      ...prev,
+      pipelineId: null,
+      name: template.name,
+      description: template.description,
+      notes: template.notes ?? '',
+      sourceType,
+      dataset: matchedSource?.id ?? '',
+      resource: template.source.resource ?? '',
+      status: template.status ?? 'draft',
+      steps: nextSteps,
+      selectedStepId: nextSteps[0]?.id ?? '__source__',
+      dirty: true,
+    }))
+  }
+
+  async function handleCopyJson() {
+    await navigator.clipboard.writeText(JSON.stringify(toPortableTemplate(), null, 2))
+    setSaveError(null)
+  }
+
+  function handleExportJson() {
+    const blob = new Blob([JSON.stringify(toPortableTemplate(), null, 2)], { type: 'application/json' })
+    const anchor = document.createElement('a')
+    anchor.href = URL.createObjectURL(blob)
+    anchor.download = `${(builder.name || 'pipeline').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pipeline'}.json`
+    anchor.click()
+    URL.revokeObjectURL(anchor.href)
+  }
+
+  function handleImportJsonFile(file: File) {
+    file.text()
+      .then(raw => JSON.parse(raw) as PipelineTemplate)
+      .then(applyImportedTemplate)
+      .catch(error => setSaveError(`Import failed: ${error instanceof Error ? error.message : String(error)}`))
   }
 
   async function handleSave() {
@@ -1562,6 +1882,7 @@ function BuilderInner() {
           id: builder.pipelineId,
           name: builder.name || 'Untitled Pipeline',
           description: builder.description,
+          notes: builder.notes,
           dataset: builder.dataset,
           sourceType: builder.sourceType,
           sourceId: builder.dataset,
@@ -1573,7 +1894,15 @@ function BuilderInner() {
       })
       if (!res.ok) { const e = await res.json(); throw new Error(e.error ?? 'Save failed') }
       const created = await res.json()
-      router.push(`/pipelines?selected=${created.id}`)
+      setBuilder(prev => ({
+        ...prev,
+        pipelineId: created.id,
+        saving: false,
+        dirty: false,
+      }))
+      if (!editId || editId !== created.id) {
+        router.replace(`/pipelines/builder?id=${created.id}`)
+      }
     } catch (e) {
       setSaveError(String(e))
       setBuilder(prev => ({ ...prev, saving: false }))
@@ -1581,6 +1910,14 @@ function BuilderInner() {
   }
 
   const selectedStep = builder.steps.find(s => s.id === builder.selectedStepId) ?? null
+  const selectedSourceName = builder.sourceType === 'dataset'
+    ? (datasets.find(dataset => dataset.id === builder.dataset)?.name ?? builder.dataset)
+    : (connectors.find(connector => connector.id === builder.dataset)?.name ?? builder.dataset)
+  const previewStepLabel = builder.selectedStepId === '__output__'
+    ? 'final pipeline output'
+    : builder.selectedStepId === '__source__' || !selectedStep
+    ? 'source data'
+    : selectedStep.label
 
   return (
     <div className="flex flex-col h-full">
@@ -1619,6 +1956,38 @@ function BuilderInner() {
           className="flex-1 min-w-0 bg-transparent text-sm font-semibold text-chef-text placeholder:text-chef-muted/60 focus:outline-none"
           value={builder.name} onChange={e => updateName(e.target.value)}
           placeholder="Pipeline name…" />
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => void handleCopyJson()}
+            className="px-2.5 py-1.5 rounded-lg text-[11px] border border-chef-border bg-chef-card text-chef-muted hover:text-chef-text hover:border-indigo-500/50 transition-colors"
+          >
+            Copy JSON
+          </button>
+          <button
+            onClick={handleExportJson}
+            className="px-2.5 py-1.5 rounded-lg text-[11px] border border-chef-border bg-chef-card text-chef-muted hover:text-chef-text hover:border-indigo-500/50 transition-colors"
+          >
+            Export JSON
+          </button>
+          <button
+            onClick={() => importFileRef.current?.click()}
+            className="px-2.5 py-1.5 rounded-lg text-[11px] border border-chef-border bg-chef-card text-chef-muted hover:text-chef-text hover:border-indigo-500/50 transition-colors"
+          >
+            Import JSON
+          </button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0]
+              if (file) handleImportJsonFile(file)
+              e.currentTarget.value = ''
+            }}
+          />
+        </div>
 
         {/* Source picker */}
         <div className="flex items-center gap-1.5">
@@ -1695,6 +2064,14 @@ function BuilderInner() {
                 placeholder="Add a description…" />
             </div>
 
+            <div className="mb-6">
+              <textarea
+                className="w-full max-w-3xl bg-chef-card border border-chef-border rounded-xl px-3 py-2.5 text-[11px] text-chef-text placeholder:text-chef-muted/50 focus:outline-none focus:border-indigo-500/50 min-h-24"
+                value={builder.notes}
+                onChange={e => updateNotes(e.target.value)}
+                placeholder="Pipeline notes: explain intent, caveats, data assumptions, and how to read the output…" />
+            </div>
+
             {builder.steps.length > 0 && (
               <div className="flex items-center gap-3 mb-5 text-[10px] text-chef-muted">
                 <Zap size={10} className="text-indigo-400" />
@@ -1711,6 +2088,8 @@ function BuilderInner() {
             )}
 
             <BuilderCanvas
+              sourceType={builder.sourceType}
+              sourceLabel={selectedSourceName}
               steps={builder.steps} selectedId={builder.selectedStepId}
               onSelect={id => setBuilder(prev => ({ ...prev, selectedStepId: id }))}
               onReorder={reorderStep} onDelete={deleteStep} />
@@ -1725,7 +2104,11 @@ function BuilderInner() {
 
         {/* Config panel */}
         <div className="w-72 shrink-0 border-l border-chef-border bg-chef-bg">
-          {selectedStep ? (
+          {builder.selectedStepId === '__source__' ? (
+            <SourcePanel builder={builder} sourceName={selectedSourceName} />
+          ) : builder.selectedStepId === '__output__' ? (
+            <OutputPanel hasSteps={builder.steps.length > 0} />
+          ) : selectedStep ? (
             <ConfigPanel
               step={selectedStep}
               schemaFields={schemaFields}
@@ -1749,7 +2132,7 @@ function BuilderInner() {
         <div className="h-64 shrink-0 border-t border-chef-border bg-chef-bg">
           <PreviewPanel
             preview={preview}
-            stepLabel={selectedStep?.label ?? ''}
+            stepLabel={previewStepLabel}
             sampleSize={sampleSize}
             cacheInfo={cacheInfo}
             onSampleSizeChange={n => setSampleSize(n)}

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getConnectors, addConnector, updateConnector, relativeTime, fmtRecords, getSparkValues,
-  setAppInsightsCreds, setAzureB2CCreds, setAzureEntraIdCreds, setConnectorRuntimeConfig, setGitHubCreds, setObservabilityCreds, ConnectorRecord,
+  setAppInsightsCreds, setAzureB2CCreds, setAzureEntraIdCreds, setAzureDevOpsCreds, setConnectorRuntimeConfig, setGitHubCreds, setObservabilityCreds, ConnectorRecord,
 } from '@/lib/connectors'
 import type { ConnectorId } from '@/components/ConnectorWizard'
 import { seedDefaultQueries } from '@/lib/saved-queries'
@@ -14,6 +14,7 @@ import { getDatasets } from '@/lib/datasets'
 import { ensureConnectorSchedulerStarted } from '@/lib/connector-sync'
 import { ensureNetworkDiscoverySchedulerStarted, markDiscoveryCandidateAdded } from '@/lib/network-discovery'
 import { consumeGitHubAuthTransaction } from '@/lib/github-auth'
+import { consumeAzureDevOpsAuthTransaction } from '@/lib/azure-devops-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -58,6 +59,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Bad Request' }, { status: 400 }) }
 
   let githubCreds: Parameters<typeof setGitHubCreds>[1] | null = null
+  let azureDevOpsCreds: Parameters<typeof setAzureDevOpsCreds>[1] | null = null
   if (body.type === 'github') {
     if (!(process.env.CONNECTOR_SECRET_KEY ?? '').trim()) {
       return NextResponse.json({ error: 'CONNECTOR_SECRET_KEY is required for GitHub connectors' }, { status: 400 })
@@ -72,6 +74,22 @@ export async function POST(req: NextRequest) {
       githubCreds = body.githubCredentials as Parameters<typeof setGitHubCreds>[1]
     } else {
       return NextResponse.json({ error: 'GitHub credentials or githubAuthTransactionId are required' }, { status: 400 })
+    }
+  }
+  if (body.type === 'azuredevops') {
+    if (!(process.env.CONNECTOR_SECRET_KEY ?? '').trim()) {
+      return NextResponse.json({ error: 'CONNECTOR_SECRET_KEY is required for Azure DevOps connectors' }, { status: 400 })
+    }
+    if (body.azureDevOpsAuthTransactionId) {
+      const transaction = consumeAzureDevOpsAuthTransaction(String(body.azureDevOpsAuthTransactionId))
+      if (!transaction?.credentials) {
+        return NextResponse.json({ error: 'Azure DevOps authorization transaction not found or incomplete' }, { status: 400 })
+      }
+      azureDevOpsCreds = transaction.credentials
+    } else if (body.azureDevOpsCredentials && typeof body.azureDevOpsCredentials === 'object') {
+      azureDevOpsCreds = body.azureDevOpsCredentials as Parameters<typeof setAzureDevOpsCreds>[1]
+    } else {
+      return NextResponse.json({ error: 'Azure DevOps credentials or azureDevOpsAuthTransactionId are required' }, { status: 400 })
     }
   }
 
@@ -181,6 +199,9 @@ export async function POST(req: NextRequest) {
   if (body.type === 'github') {
     setGitHubCreds(rec.id, githubCreds!)
   }
+  if (body.type === 'azuredevops') {
+    setAzureDevOpsCreds(rec.id, azureDevOpsCreds!)
+  }
 
   const sourceDiscoveryId = String(body.sourceDiscoveryId ?? '')
   if (sourceDiscoveryId) {
@@ -200,6 +221,9 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
   if (body.type === 'github' && !(process.env.CONNECTOR_SECRET_KEY ?? '').trim()) {
     return NextResponse.json({ error: 'CONNECTOR_SECRET_KEY is required for GitHub connectors' }, { status: 400 })
+  }
+  if (body.type === 'azuredevops' && !(process.env.CONNECTOR_SECRET_KEY ?? '').trim()) {
+    return NextResponse.json({ error: 'CONNECTOR_SECRET_KEY is required for Azure DevOps connectors' }, { status: 400 })
   }
 
   const updated = updateConnector(id, {
@@ -302,6 +326,18 @@ export async function PATCH(req: NextRequest) {
       setGitHubCreds(id, transaction.credentials)
     } else if (body.githubCredentials && typeof body.githubCredentials === 'object') {
       setGitHubCreds(id, body.githubCredentials as Parameters<typeof setGitHubCreds>[1])
+    }
+  }
+
+  if (body.type === 'azuredevops') {
+    if (body.azureDevOpsAuthTransactionId) {
+      const transaction = consumeAzureDevOpsAuthTransaction(String(body.azureDevOpsAuthTransactionId))
+      if (!transaction?.credentials) {
+        return NextResponse.json({ error: 'Azure DevOps authorization transaction not found or incomplete' }, { status: 400 })
+      }
+      setAzureDevOpsCreds(id, transaction.credentials)
+    } else if (body.azureDevOpsCredentials && typeof body.azureDevOpsCredentials === 'object') {
+      setAzureDevOpsCreds(id, body.azureDevOpsCredentials as Parameters<typeof setAzureDevOpsCreds>[1])
     }
   }
 

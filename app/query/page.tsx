@@ -1,13 +1,16 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Play, ChevronDown, Copy, Download,
   Zap, Table, Code2, AlertCircle, Loader2, CheckCircle2,
   ArrowRight, History, ChevronRight, X, Server,
-  BarChart2, Clock, Plus, Trash2, Database, Save,
+  BarChart2, Clock, Plus, Trash2, Database, Save, LayoutTemplate, GripVertical, Eye,
 } from 'lucide-react'
 import { useAppSettings } from '@/components/SettingsProvider'
+import type { SourceType } from '@/lib/datasets'
+import type { QueryRecipe as StoredQueryRecipe, RecipeVariableDefinition } from '@/lib/query-recipes'
+import { inferVariablesFromRecipe, compactLayout, type InferredVariable, type RecipeLayout, type RecipeWidget, type RecipeWidgetWidth } from '@/lib/query-designer'
 
 /* ── Types ──────────────────────────────────────────────────────────────────── */
 type Lang = 'sql' | 'jsonpath' | 'jmespath' | 'kql' | 'redis'
@@ -32,6 +35,13 @@ interface QResult {
   rowCount: number; totalRows: number
   bytesScanned: number; durationMs: number
   kqlTranslated?: string; provider?: string; error?: string
+  renderedQuery?: string
+  executionMode?: 'pushdown' | 'in_memory' | 'federated'
+  warnings?: string[]
+  boundVariables?: Record<string, unknown>
+  timeWindow?: { preset: string; label: string; startTime: string; endTime: string; timespanIso: string; bucketHint: string }
+  sourceBindings?: Array<{ alias: string; sourceType: SourceType; sourceId: string; resource?: string; rowLimit?: number }>
+  recipeId?: string | null
 }
 
 interface HistoryEntry {
@@ -40,6 +50,12 @@ interface HistoryEntry {
   durationMs: number; ts: number; error?: string
   redisMode?: RedisMode
   redisValueType?: RedisValueType
+  renderedQuery?: string
+  executionMode?: string
+  variables?: Record<string, unknown>
+  sourceBindings?: Array<{ alias: string; sourceType: SourceType; sourceId: string; resource?: string; rowLimit?: number }>
+  timeWindow?: string
+  recipeId?: string | null
 }
 
 interface SavedQuery { id: string; lang: Lang; name: string; query: string }
@@ -76,12 +92,36 @@ interface RedisCatalogResult {
   error?: string
 }
 
+interface SourceBinding {
+  id: string
+  alias: string
+  sourceType: 'dataset' | 'connector'
+  sourceId: string
+  resource?: string
+  queryHint?: string
+  rowLimit?: number
+}
+
+type RecipeVariable = RecipeVariableDefinition
+type QueryRecipe = StoredQueryRecipe
+
 const AI_TIMESPAN_PRESETS = [
   { label: 'Last 1h',  value: 'PT1H'  },
   { label: 'Last 6h',  value: 'PT6H'  },
   { label: 'Last 24h', value: 'PT24H' },
   { label: 'Last 7d',  value: 'P7D'   },
   { label: 'Last 30d', value: 'P30D'  },
+]
+
+const GLOBAL_TIME_WINDOWS = [
+  { label: 'Last 1h', value: 'last_1h' },
+  { label: 'Last 6h', value: 'last_6h' },
+  { label: 'Last 24h', value: 'last_24h' },
+  { label: 'Last 7d', value: 'last_7d' },
+  { label: 'Last 30d', value: 'last_30d' },
+  { label: 'Today', value: 'today' },
+  { label: 'Yesterday', value: 'yesterday' },
+  { label: 'Month to date', value: 'month_to_date' },
 ]
 
 function defaultObservabilityKql(type: string): string {
@@ -211,6 +251,7 @@ function timeAgo(ts: number) {
 
 type SortDirection = 'asc' | 'desc'
 type SortState = { column: string; direction: SortDirection }
+type BuilderTab = 'query' | 'designer' | 'preview'
 
 function formatSqlIdentifier(column: string) {
   return /^\w+$/.test(column) ? column : `"${column.replace(/"/g, '""')}"`
@@ -348,10 +389,21 @@ export default function QueryPage() {
   const [showHistory,   setShowHistory]   = useState(false)
   const [showSchema,    setShowSchema]    = useState(true)
   const [history,       setHistory]       = useState<HistoryEntry[]>([])
+  const [recipes,       setRecipes]       = useState<QueryRecipe[]>([])
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null)
+  const [showRecipes,   setShowRecipes]   = useState(true)
+  const [builderTab,    setBuilderTab]    = useState<BuilderTab>('query')
+  const [recipeValues,  setRecipeValues]  = useState<Record<string, string | number | boolean>>({})
+  const [globalTimeWindow, setGlobalTimeWindow] = useState('last_24h')
+  const [sourceBindings, setSourceBindings] = useState<SourceBinding[]>([])
+  const [draftRecipe,   setDraftRecipe]   = useState<QueryRecipe | null>(null)
+  const [selectedVariableName, setSelectedVariableName] = useState<string | null>(null)
   const [sortState,     setSortState]     = useState<SortState | null>(null)
   const [selectedRows,  setSelectedRows]  = useState<number[]>([])
   const [lastSelectedRow, setLastSelectedRow] = useState<number | null>(null)
   const [copyFeedback,  setCopyFeedback]  = useState<'selected' | 'all' | null>(null)
+  const [resultsPanelHeight, setResultsPanelHeight] = useState(320)
+  const [resizingResults, setResizingResults] = useState(false)
 
   /* Observability mode */
   const [aiConnectors,     setAiConnectors]     = useState<ObservabilityConnector[]>([])
@@ -386,8 +438,12 @@ export default function QueryPage() {
   const textareaRef  = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLDivElement>(null)
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const editorShellRef = useRef<HTMLDivElement>(null)
 
   const dsMeta = allDatasets.find(d => d.id === dataset) ?? allDatasets[0]
+  const selectedRecipe = recipes.find(recipe => recipe.id === selectedRecipeId) ?? null
+  const allSourceOptions: DatasetMeta[] = allDatasets
+  const dragWidgetRef = useRef<string | null>(null)
   const autoRanRef = useRef(false)
   const isGenericConnectorMode = dsMeta?.sourceType === 'connector'
   const visibleRowCount = results?.rows.length ?? 0
@@ -395,6 +451,29 @@ export default function QueryPage() {
   const allVisibleSelected = visibleRowCount > 0 && selectedRows.length === visibleRowCount
   const someVisibleSelected = selectedRows.length > 0 && selectedRows.length < visibleRowCount
   const canRewriteSort = !!results && (lang === 'sql' || lang === 'kql')
+  const draftVariables = (draftRecipe?.variables ?? []) as InferredVariable[]
+  const draftLayout = draftRecipe?.cardLayout && 'sections' in draftRecipe.cardLayout ? draftRecipe.cardLayout as RecipeLayout : null
+  const selectedVariable = draftVariables.find(variable => variable.name === selectedVariableName) ?? null
+
+  useEffect(() => {
+    if (!resizingResults) return
+    function handlePointerMove(event: MouseEvent) {
+      const shell = editorShellRef.current
+      if (!shell) return
+      const bounds = shell.getBoundingClientRect()
+      const nextHeight = Math.min(Math.max(bounds.bottom - event.clientY, 180), Math.max(220, bounds.height - 160))
+      setResultsPanelHeight(nextHeight)
+    }
+    function handlePointerUp() {
+      setResizingResults(false)
+    }
+    window.addEventListener('mousemove', handlePointerMove)
+    window.addEventListener('mouseup', handlePointerUp)
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove)
+      window.removeEventListener('mouseup', handlePointerUp)
+    }
+  }, [resizingResults])
 
   function defaultQueryFor(dsId: string, l: Lang): string {
     const meta = allDatasets.find(d => d.id === dsId)
@@ -424,7 +503,10 @@ export default function QueryPage() {
   function getSavedQueries(): SavedQuery[] {
     if (savedQueriesMap[dataset]) return savedQueriesMap[dataset]
     const tbl = (dsMeta?.name ?? dataset).replace(/-/g, '_')
-    const fields = dsMeta?.fields ?? []
+    const fields = [
+      ...(dsMeta?.fields ?? []),
+      ...sourceBindings.map(binding => binding.alias),
+    ]
     const gf = fields.find(f =>
       !['id','user_id','event_id','created_at','timestamp','ts','created','url','image'].includes(f)
     ) ?? fields[1] ?? '*'
@@ -439,22 +521,20 @@ export default function QueryPage() {
   /* Load history + fetch datasets + observability connectors */
   useEffect(() => {
     setHistory(loadHistory())
-    fetch('/api/connectors')
-      .then(r => r.json())
-      .then((list: ObservabilityConnector[]) => {
-        setAiConnectors(list.filter(c => ['appinsights', 'azuremonitor', 'elasticsearch', 'datadog'].includes(c.type)))
-        setRedisConnectors(list.filter(c => c.type === 'redis'))
-        setGenericConnectors(list.filter(c => GENERIC_QUERYABLE_CONNECTOR_TYPES.includes(c.type)))
-      })
-      .catch(() => {})
-    fetch('/api/datasets')
-      .then(r => r.json())
-      .then((list: Array<{
+    Promise.all([
+      fetch('/api/connectors').then(r => r.json()).catch(() => []),
+      fetch('/api/datasets').then(r => r.json()).catch(() => []),
+    ])
+      .then(([connectorList, datasetList]: [ObservabilityConnector[], Array<{
         name: string; records: string; description: string
         queryDataset: string | null
         schema: Array<{ field: string; type: string }> | null
-      }>) => {
-        const metas: DatasetMeta[] = list.map(d => ({
+      }>]) => {
+        setAiConnectors(connectorList.filter(c => ['appinsights', 'azuremonitor', 'elasticsearch', 'datadog'].includes(c.type)))
+        setRedisConnectors(connectorList.filter(c => c.type === 'redis'))
+        setGenericConnectors(connectorList.filter(c => GENERIC_QUERYABLE_CONNECTOR_TYPES.includes(c.type)))
+
+        const metas: DatasetMeta[] = datasetList.map(d => ({
           id:     d.queryDataset ?? d.name,
           name:   d.name,
           badge:  d.records,
@@ -464,7 +544,7 @@ export default function QueryPage() {
           fields: d.schema?.map(f => f.field) ?? [],
           schema: d.schema?.map(f => ({ field: f.field, type: f.type })) ?? [],
         }))
-        const connectorMetas: DatasetMeta[] = genericConnectors.map(connector => ({
+        const connectorMetas: DatasetMeta[] = connectorList.map(connector => ({
           id: `connector:${connector.id}`,
           name: connector.name,
           badge: 'live',
@@ -500,7 +580,7 @@ export default function QueryPage() {
       })
       .catch(() => { /* keep fallback */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genericConnectors, settings?.queryEngine.defaultDataset])
+  }, [settings?.queryEngine.defaultDataset])
 
   useEffect(() => {
     function syncHistory() {
@@ -522,17 +602,346 @@ export default function QueryPage() {
     if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current)
   }, [])
 
+  useEffect(() => {
+    fetch('/api/recipes')
+      .then(r => r.json())
+      .then((items: QueryRecipe[]) => setRecipes(items))
+      .catch(() => setRecipes([]))
+  }, [])
+
+  const normalizedRecipeSources = useMemo(() => sourceBindings.map(binding => ({
+    alias: binding.alias.trim() || 'source_rows',
+    sourceType: binding.sourceType,
+    sourceId: binding.sourceId,
+    resource: binding.resource?.trim() || undefined,
+    queryHint: binding.queryHint?.trim() || undefined,
+    rowLimit: binding.rowLimit,
+  })), [sourceBindings])
+
+  useEffect(() => {
+    if (isAiMode || isRedisMode) return
+    const baseRecipe = draftRecipe ?? selectedRecipe ?? null
+    const inferred = inferVariablesFromRecipe(query, normalizedRecipeSources, baseRecipe)
+    const nextRecipe: QueryRecipe = {
+      id: baseRecipe?.id ?? 'draft',
+      name: baseRecipe?.name ?? 'Untitled Recipe',
+      description: baseRecipe?.description ?? '',
+      lang,
+      queryText: query,
+      sources: normalizedRecipeSources,
+      variables: inferred.variables,
+      timeWindowBinding: {
+        enabled: inferred.variables.some(variable => ['startTime', 'endTime', 'timespanIso', 'bucketHint'].includes(variable.name)),
+        defaultPreset: (baseRecipe?.timeWindowBinding?.defaultPreset ?? globalTimeWindow) as QueryRecipe['timeWindowBinding'] extends { defaultPreset: infer T } ? T : never,
+      },
+      cardLayout: {
+        ...inferred.layout,
+        title: inferred.layout.title ?? baseRecipe?.name ?? 'Generated Form',
+        subtitle: inferred.layout.subtitle ?? baseRecipe?.description ?? '',
+        accent: inferred.layout.accent ?? 'indigo',
+      },
+      createdAt: baseRecipe?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    }
+
+    setDraftRecipe(prev => {
+      const prevJson = prev ? JSON.stringify(prev) : ''
+      const nextJson = JSON.stringify(nextRecipe)
+      return prevJson === nextJson ? prev : nextRecipe
+    })
+    setSelectedVariableName(prev => prev ?? inferred.variables.find(variable => !variable.stale && !['startTime', 'endTime', 'timespanIso', 'bucketHint'].includes(variable.name))?.name ?? inferred.variables[0]?.name ?? null)
+  }, [query, normalizedRecipeSources, lang, globalTimeWindow, selectedRecipe, isAiMode, isRedisMode])
+
+  useEffect(() => {
+    if (!dataset) return
+    setSourceBindings(prev => {
+      if (prev.length > 0) return prev
+      return [{ id: crypto.randomUUID(), alias: 'source_rows', sourceType: dsMeta?.sourceType ?? 'dataset', sourceId: dsMeta?.sourceId ?? dataset, resource: dsMeta?.resource, queryHint: undefined, rowLimit: 500 }]
+    })
+  }, [dataset, dsMeta?.sourceId, dsMeta?.sourceType, dsMeta?.resource])
+
+  function syncPrimarySourceBinding(nextDatasetId: string) {
+    const meta = allDatasets.find(item => item.id === nextDatasetId)
+    setSourceBindings(prev => {
+      const primary = {
+        id: prev[0]?.id ?? crypto.randomUUID(),
+        alias: prev[0]?.alias ?? 'source_rows',
+        sourceType: meta?.sourceType ?? 'dataset',
+        sourceId: meta?.sourceId ?? nextDatasetId,
+        resource: meta?.resource,
+        queryHint: prev[0]?.queryHint,
+        rowLimit: prev[0]?.rowLimit ?? 500,
+      }
+      return [primary, ...prev.slice(1)]
+    })
+  }
+
+  function applyRecipe(recipe: QueryRecipe) {
+    setSelectedRecipeId(recipe.id)
+    setLang(recipe.lang)
+    setQuery(recipe.queryText)
+    setRecipeValues(Object.fromEntries(recipe.variables.map(variable => [variable.name, variable.defaultValue ?? ''])))
+    setGlobalTimeWindow(recipe.timeWindowBinding?.defaultPreset ?? 'last_24h')
+    setDraftRecipe(recipe)
+    setBuilderTab('preview')
+    setSourceBindings(recipe.sources.map(source => ({
+      id: crypto.randomUUID(),
+      alias: source.alias,
+      sourceType: source.sourceType,
+      sourceId: source.sourceId,
+      resource: source.resource,
+      queryHint: source.queryHint,
+      rowLimit: source.rowLimit,
+    })))
+    if (recipe.sources[0]) {
+      const first = allDatasets.find(item => item.sourceId === recipe.sources[0].sourceId && item.sourceType === recipe.sources[0].sourceType)
+      if (first) setDataset(first.id)
+    }
+    setResults(null)
+    setQueryError(null)
+  }
+
+  function addSourceBinding() {
+    const fallback = allSourceOptions[0]
+    if (!fallback) return
+    setSourceBindings(prev => [...prev, {
+      id: crypto.randomUUID(),
+      alias: `source_${prev.length + 1}`,
+      sourceType: fallback.sourceType,
+      sourceId: fallback.sourceId,
+      resource: fallback.resource,
+      queryHint: undefined,
+      rowLimit: 500,
+    }])
+  }
+
+  function updateSourceBinding(id: string, patch: Partial<SourceBinding>) {
+    setSourceBindings(prev => prev.map(binding => binding.id === id ? { ...binding, ...patch } : binding))
+  }
+
+  function removeSourceBinding(id: string) {
+    setSourceBindings(prev => prev.length <= 1 ? prev : prev.filter(binding => binding.id !== id))
+  }
+
+  function updateDraftVariable(name: string, patch: Partial<RecipeVariable>) {
+    setDraftRecipe(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        variables: prev.variables.map(variable => variable.name === name ? { ...variable, ...patch, origin: 'customized' } : variable),
+      }
+    })
+  }
+
+  function updateDraftLayout(mutator: (layout: RecipeLayout) => RecipeLayout) {
+    setDraftRecipe(prev => {
+      if (!prev || !prev.cardLayout || !('sections' in prev.cardLayout)) return prev
+      return { ...prev, cardLayout: compactLayout(mutator(prev.cardLayout as RecipeLayout)) }
+    })
+  }
+
+  function addSection() {
+    updateDraftLayout(layout => ({
+      ...layout,
+      sections: [...layout.sections, { id: crypto.randomUUID(), title: `Section ${layout.sections.length + 1}`, rows: [] }],
+    }))
+  }
+
+  function addRow(sectionId: string) {
+    updateDraftLayout(layout => ({
+      ...layout,
+      sections: layout.sections.map(section => section.id === sectionId
+        ? { ...section, rows: [...section.rows, { id: crypto.randomUUID(), widgetIds: [] }] }
+        : section),
+    }))
+  }
+
+  function placeWidget(widgetId: string, sectionId: string, rowId?: string | null) {
+    updateDraftLayout(layout => {
+      const cleanedSections = layout.sections.map(section => ({
+        ...section,
+        rows: section.rows.map(row => ({ ...row, widgetIds: row.widgetIds.filter(id => id !== widgetId) })),
+      }))
+      const nextUnplaced = layout.unplacedWidgetIds.filter(id => id !== widgetId)
+      return {
+        ...layout,
+        sections: cleanedSections.map(section => {
+          if (section.id !== sectionId) return section
+          if (rowId) {
+            return {
+              ...section,
+              rows: section.rows.map(row => row.id === rowId ? { ...row, widgetIds: [...row.widgetIds, widgetId] } : row),
+            }
+          }
+          const rows = section.rows.length ? [...section.rows] : [{ id: crypto.randomUUID(), widgetIds: [] }]
+          rows[rows.length - 1] = { ...rows[rows.length - 1], widgetIds: [...rows[rows.length - 1].widgetIds, widgetId] }
+          return { ...section, rows }
+        }),
+        unplacedWidgetIds: nextUnplaced,
+      }
+    })
+  }
+
+  function moveWidgetToUnplaced(widgetId: string) {
+    updateDraftLayout(layout => ({
+      ...layout,
+      sections: layout.sections.map(section => ({
+        ...section,
+        rows: section.rows.map(row => ({ ...row, widgetIds: row.widgetIds.filter(id => id !== widgetId) })),
+      })),
+      unplacedWidgetIds: layout.unplacedWidgetIds.includes(widgetId) ? layout.unplacedWidgetIds : [...layout.unplacedWidgetIds, widgetId],
+    }))
+  }
+
+  function updateWidget(widgetId: string, patch: Partial<RecipeWidget>) {
+    updateDraftLayout(layout => ({
+      ...layout,
+      widgets: layout.widgets.map(widget => widget.id === widgetId ? { ...widget, ...patch } : widget),
+    }))
+  }
+
+  function removeStaleVariable(name: string) {
+    setDraftRecipe(prev => {
+      if (!prev || !prev.cardLayout || !('sections' in prev.cardLayout)) return prev
+      const layout = prev.cardLayout as RecipeLayout
+      const removedWidgetIds = new Set(layout.widgets.filter(widget => widget.variableName === name).map(widget => widget.id))
+      return {
+        ...prev,
+        variables: prev.variables.filter(variable => variable.name !== name),
+        cardLayout: compactLayout({
+          ...layout,
+          widgets: layout.widgets.filter(widget => widget.variableName !== name),
+          unplacedWidgetIds: layout.unplacedWidgetIds.filter(id => !removedWidgetIds.has(id)),
+          sections: layout.sections.map(section => ({
+            ...section,
+            rows: section.rows.map(row => ({ ...row, widgetIds: row.widgetIds.filter(id => !removedWidgetIds.has(id)) })),
+          })),
+        }),
+      }
+    })
+    setSelectedVariableName(current => current === name ? null : current)
+  }
+
+  function hideVariableWidgets(name: string) {
+    updateDraftLayout(layout => ({
+      ...layout,
+      widgets: layout.widgets.map(widget => widget.variableName === name ? { ...widget, hidden: true } : widget),
+    }))
+  }
+
+  function autoPlaceWidgets(mode: 'compact' | 'stacked') {
+    if (!draftLayout) return
+    const timeWidget = draftLayout.widgets.find(widget => widget.variableName === '__timeWindow__')
+    const regularWidgets = draftLayout.widgets.filter(widget => widget.variableName !== '__timeWindow__')
+    const rows: Array<{ id: string; widgetIds: string[] }> = []
+
+    if (timeWidget) rows.push({ id: crypto.randomUUID(), widgetIds: [timeWidget.id] })
+
+    if (mode === 'stacked') {
+      for (const widget of regularWidgets) rows.push({ id: crypto.randomUUID(), widgetIds: [widget.id] })
+    } else {
+      let currentRow: string[] = []
+      let currentUnits = 0
+      const unitsFor = (width: RecipeWidgetWidth) => width === 'full' ? 3 : width === 'half' ? 2 : 1
+      for (const widget of regularWidgets) {
+        const units = unitsFor(widget.width)
+        if (units === 3) {
+          if (currentRow.length) rows.push({ id: crypto.randomUUID(), widgetIds: currentRow })
+          rows.push({ id: crypto.randomUUID(), widgetIds: [widget.id] })
+          currentRow = []
+          currentUnits = 0
+          continue
+        }
+        if (currentUnits + units > 3 && currentRow.length) {
+          rows.push({ id: crypto.randomUUID(), widgetIds: currentRow })
+          currentRow = []
+          currentUnits = 0
+        }
+        currentRow.push(widget.id)
+        currentUnits += units
+      }
+      if (currentRow.length) rows.push({ id: crypto.randomUUID(), widgetIds: currentRow })
+    }
+
+    updateDraftLayout(layout => ({
+      ...layout,
+      sections: layout.sections.length
+        ? layout.sections.map((section, index) => index === 0 ? { ...section, rows } : section)
+        : [{ id: crypto.randomUUID(), title: 'Inputs', rows }],
+      unplacedWidgetIds: [],
+    }))
+  }
+
+  function generateFormFromQuery() {
+    if (isAiMode || isRedisMode) return
+    const inferred = inferVariablesFromRecipe(query, normalizedRecipeSources, draftRecipe ?? selectedRecipe ?? null)
+    setDraftRecipe(prev => ({
+      id: prev?.id ?? selectedRecipe?.id ?? 'draft',
+      name: prev?.name ?? selectedRecipe?.name ?? 'Untitled Recipe',
+      description: prev?.description ?? selectedRecipe?.description ?? '',
+      lang,
+      queryText: query,
+      sources: normalizedRecipeSources,
+      variables: inferred.variables,
+      timeWindowBinding: {
+        enabled: inferred.variables.some(variable => ['startTime', 'endTime', 'timespanIso', 'bucketHint'].includes(variable.name)),
+        defaultPreset: (prev?.timeWindowBinding?.defaultPreset ?? selectedRecipe?.timeWindowBinding?.defaultPreset ?? globalTimeWindow) as QueryRecipe['timeWindowBinding'] extends { defaultPreset: infer T } ? T : never,
+      },
+      cardLayout: {
+        ...inferred.layout,
+        title: inferred.layout.title ?? prev?.name ?? selectedRecipe?.name ?? 'Generated Form',
+        subtitle: inferred.layout.subtitle ?? prev?.description ?? selectedRecipe?.description ?? '',
+        accent: inferred.layout.accent ?? 'indigo',
+      },
+      createdAt: prev?.createdAt ?? selectedRecipe?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    }))
+    setBuilderTab('designer')
+  }
+
+  async function saveCurrentAsRecipe() {
+    const current = draftRecipe
+    if (!current) return
+    const name = current.name.trim() || draftLayout?.title?.trim() || 'Untitled Recipe'
+    const description = current.description.trim()
+    const payload = {
+      name,
+      description,
+      lang,
+      queryText: query,
+      sources: sourceBindings.map(({ alias, sourceType, sourceId, resource, queryHint, rowLimit }) => ({ alias, sourceType, sourceId, resource, queryHint, rowLimit })),
+      variables: current.variables,
+      timeWindowBinding: { enabled: true, defaultPreset: globalTimeWindow },
+      cardLayout: current.cardLayout,
+    }
+    const res = await fetch(selectedRecipeId ? `/api/recipes/${selectedRecipeId}` : '/api/recipes', {
+      method: selectedRecipeId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const saved = await res.json() as QueryRecipe
+    setRecipes(prev => {
+      const existing = prev.some(recipe => recipe.id === saved.id)
+      return existing ? prev.map(recipe => recipe.id === saved.id ? saved : recipe) : [...prev, saved]
+    })
+    setSelectedRecipeId(saved.id)
+    setDraftRecipe(saved)
+  }
+
   function handleLangChange(l: Lang) {
+    setSelectedRecipeId(null)
     setLang(l); setQuery(defaultQueryFor(dataset, l))
     setResults(null); setQueryError(null); setShowLangMenu(false)
   }
 
   function handleDatasetChange(d: string) {
+    setSelectedRecipeId(null)
     setAiConnectorId(null)
     setRedisConnectorId(null)
     const nextLang = lang === 'redis' ? 'sql' : lang
     setLang(nextLang)
     setDataset(d); setQuery(defaultQueryFor(d, nextLang))
+    syncPrimarySourceBinding(d)
     setResults(null); setQueryError(null); setShowDataMenu(false); dismissAc()
   }
 
@@ -745,15 +1154,36 @@ export default function QueryPage() {
     /* ── Standard dataset / live connector branch ── */
     try {
       const activeSource = allDatasets.find(item => item.id === dataset)
+      const effectiveSources = sourceBindings.length > 0
+        ? sourceBindings.map(binding => ({
+            alias: binding.alias.trim() || 'source_rows',
+            sourceType: binding.sourceType,
+            sourceId: binding.sourceId,
+            resource: binding.resource?.trim() || undefined,
+            queryHint: binding.queryHint?.trim() || undefined,
+            rowLimit: binding.rowLimit ?? Math.min(settings?.queryEngine.maxRows ?? 500, 500),
+          }))
+        : [{
+            alias: 'source_rows',
+            sourceType: activeSource?.sourceType ?? 'dataset',
+            sourceId: activeSource?.sourceId ?? dataset,
+            resource: activeSource?.resource,
+            queryHint: undefined,
+            rowLimit: Math.min(settings?.queryEngine.maxRows ?? 500, 500),
+          }]
       const res  = await fetch('/api/query', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sql: effectiveQuery,
+          query: effectiveQuery,
           lang,
           dataset,
           sourceType: activeSource?.sourceType ?? 'dataset',
           sourceId: activeSource?.sourceId ?? dataset,
           resource: activeSource?.resource,
+          sources: effectiveSources,
+          recipeId: selectedRecipeId,
+          variables: recipeValues,
+          timeWindow: globalTimeWindow,
           rowLimit: settings?.queryEngine.maxRows,
         }),
       })
@@ -761,7 +1191,22 @@ export default function QueryPage() {
 
       if (data.error) {
         setQueryError(data.error)
-        const entry: HistoryEntry = { id: crypto.randomUUID(), lang, dataset, query: effectiveQuery, rowCount: 0, durationMs: data.durationMs ?? 0, ts: Date.now(), error: data.error }
+        const entry: HistoryEntry = {
+          id: crypto.randomUUID(),
+          lang,
+          dataset,
+          query: effectiveQuery,
+          rowCount: 0,
+          durationMs: data.durationMs ?? 0,
+          ts: Date.now(),
+          error: data.error,
+          renderedQuery: data.renderedQuery,
+          executionMode: data.executionMode,
+          variables: data.boundVariables,
+          sourceBindings: data.sourceBindings,
+          timeWindow: data.timeWindow?.label,
+          recipeId: data.recipeId ?? selectedRecipeId,
+        }
         const next = [entry, ...history].slice(0, 50); setHistory(next); saveHistory(next)
       } else {
         setResults(data)
@@ -804,14 +1249,28 @@ export default function QueryPage() {
           setTimeout(() => setStoredNotice(null), 3000)
         }
       }
-        const entry: HistoryEntry = { id: crypto.randomUUID(), lang, dataset, query: effectiveQuery, rowCount: data.rowCount, durationMs: data.durationMs, ts: Date.now() }
+        const entry: HistoryEntry = {
+          id: crypto.randomUUID(),
+          lang,
+          dataset,
+          query: effectiveQuery,
+          rowCount: data.rowCount,
+          durationMs: data.durationMs,
+          ts: Date.now(),
+          renderedQuery: data.renderedQuery,
+          executionMode: data.executionMode,
+          variables: data.boundVariables,
+          sourceBindings: data.sourceBindings,
+          timeWindow: data.timeWindow?.label,
+          recipeId: data.recipeId ?? selectedRecipeId,
+        }
         const next = [entry, ...history].slice(0, 50); setHistory(next); saveHistory(next)
       }
     } catch (e: unknown) {
       setQueryError(e instanceof Error ? e.message : String(e))
     } finally { setRunning(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, lang, dataset, running, history, isAiMode, isRedisMode, aiConnectorId, aiTimespan, redisConnectorId, redisMode, redisValueType, redisCatalogKind, storeLocally, storeDatasetName, settings?.queryEngine.maxRows, allDatasets])
+  }, [query, lang, dataset, running, history, isAiMode, isRedisMode, aiConnectorId, aiTimespan, redisConnectorId, redisMode, redisValueType, redisCatalogKind, storeLocally, storeDatasetName, settings?.queryEngine.maxRows, allDatasets, sourceBindings, selectedRecipeId, recipeValues, globalTimeWindow])
 
   function showCopyFeedback(kind: 'selected' | 'all') {
     setCopyFeedback(kind)
@@ -1005,6 +1464,15 @@ export default function QueryPage() {
                     setAiConnectorId(null)
                     setRedisConnectorId(null)
                     setDataset(h.dataset)
+                    if (h.sourceBindings?.length) {
+                      setSourceBindings(h.sourceBindings.map(binding => ({ ...binding, id: crypto.randomUUID() })))
+                    }
+                    if (h.variables) setRecipeValues(h.variables as Record<string, string | number | boolean>)
+                    if (h.timeWindow) {
+                      const preset = GLOBAL_TIME_WINDOWS.find(item => item.label === h.timeWindow)?.value
+                      if (preset) setGlobalTimeWindow(preset)
+                    }
+                    setSelectedRecipeId(h.recipeId ?? null)
                   }
                   setResults(null)
                   setQueryError(null)
@@ -1098,6 +1566,102 @@ export default function QueryPage() {
                   )}
                 </div>
               )}
+            </div>
+
+            <div className="border-b border-chef-border">
+              <button
+                onClick={() => setShowRecipes(v => !v)}
+                className="w-full flex items-center gap-1.5 px-3 py-2 text-[9px] font-semibold uppercase tracking-widest text-chef-muted hover:text-chef-text transition-colors"
+              >
+                <span>Recipes</span>
+                <span className="normal-case text-chef-border font-normal ml-0.5">{recipes.length}</span>
+                <ChevronRight size={9} className={`ml-auto transition-transform duration-150 ${showRecipes ? 'rotate-90' : ''}`} />
+              </button>
+              {showRecipes && (
+                <div className="px-2 pb-2 space-y-1 max-h-56 overflow-auto">
+                  {recipes.length === 0
+                    ? <div className="px-2 py-3 text-[10px] text-chef-muted text-center">No recipes yet</div>
+                    : recipes.map(recipe => (
+                      <button
+                        key={recipe.id}
+                        onClick={() => applyRecipe(recipe)}
+                        className={`w-full text-left px-2.5 py-2 rounded-lg border transition-colors ${
+                          selectedRecipeId === recipe.id
+                            ? 'border-indigo-500/50 bg-indigo-500/10'
+                            : 'border-chef-border bg-chef-bg hover:bg-chef-card'
+                        }`}
+                      >
+                        <div className="text-[11px] text-chef-text leading-tight">{recipe.name}</div>
+                        <div className="text-[10px] text-chef-muted mt-0.5 line-clamp-2">{recipe.description}</div>
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            <div className="px-3 py-2.5 border-b border-chef-border">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[9px] font-semibold uppercase tracking-widest text-chef-muted">Source Bindings</div>
+                <button onClick={addSourceBinding} className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                  + alias
+                </button>
+              </div>
+              <div className="space-y-2">
+                {sourceBindings.map(binding => (
+                  <div key={binding.id} className="rounded-lg border border-chef-border bg-chef-bg p-2 space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={binding.alias}
+                        onChange={e => updateSourceBinding(binding.id, { alias: e.target.value.replace(/[^\w]/g, '_') })}
+                        className="flex-1 min-w-0 px-2 py-1 bg-chef-surface border border-chef-border rounded text-[10px] font-mono text-chef-text"
+                        placeholder="alias"
+                      />
+                      <button
+                        onClick={() => removeSourceBinding(binding.id)}
+                        className="p-1 text-chef-muted hover:text-rose-400 transition-colors"
+                        title="Remove binding"
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
+                    <select
+                      value={`${binding.sourceType}:${binding.sourceId}`}
+                      onChange={e => {
+                        const [sourceType, sourceId] = e.target.value.split(':')
+                        const option = allSourceOptions.find(item => item.sourceType === sourceType && item.sourceId === sourceId)
+                        updateSourceBinding(binding.id, { sourceType: sourceType as 'dataset' | 'connector', sourceId, resource: option?.resource })
+                      }}
+                      className="w-full bg-chef-surface border border-chef-border rounded text-[10px] font-mono px-2 py-1 text-chef-text"
+                    >
+                      {allSourceOptions.map(option => (
+                        <option key={`${option.sourceType}:${option.sourceId}`} value={`${option.sourceType}:${option.sourceId}`}>
+                          {option.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={binding.resource ?? ''}
+                      onChange={e => updateSourceBinding(binding.id, { resource: e.target.value })}
+                      className="w-full px-2 py-1 bg-chef-surface border border-chef-border rounded text-[10px] font-mono text-chef-text"
+                      placeholder="resource / subquery / path (optional)"
+                    />
+                    <input
+                      value={binding.queryHint ?? ''}
+                      onChange={e => updateSourceBinding(binding.id, { queryHint: e.target.value })}
+                      className="w-full px-2 py-1 bg-chef-surface border border-chef-border rounded text-[10px] font-mono text-chef-text"
+                      placeholder="query hint with {{vars}} (optional)"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={binding.rowLimit ?? 500}
+                      onChange={e => updateSourceBinding(binding.id, { rowLimit: Math.max(1, Number(e.target.value) || 500) })}
+                      className="w-full px-2 py-1 bg-chef-surface border border-chef-border rounded text-[10px] font-mono text-chef-text"
+                      placeholder="row limit"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Schema fields panel */}
@@ -1499,6 +2063,34 @@ export default function QueryPage() {
             <Copy size={13} />
           </button>
 
+          {!isAiMode && !isRedisMode && (
+            <button
+              onClick={() => { setBuilderTab('designer') }}
+              className="flex items-center gap-1.5 border border-chef-border bg-chef-bg hover:border-indigo-500/40 text-[11px] text-chef-muted hover:text-chef-text px-2.5 py-1.5 rounded-lg transition-colors"
+              title="Generate and edit form"
+            >
+              <LayoutTemplate size={11} /> Form
+            </button>
+          )}
+
+          {!isAiMode && !isRedisMode && (
+            <button
+              onClick={generateFormFromQuery}
+              className="flex items-center gap-1.5 border border-chef-border bg-chef-bg hover:border-indigo-500/40 text-[11px] text-chef-muted hover:text-chef-text px-2.5 py-1.5 rounded-lg transition-colors"
+            >
+              <LayoutTemplate size={11} /> Generate Form
+            </button>
+          )}
+
+          {!isAiMode && !isRedisMode && (
+            <button
+              onClick={() => void saveCurrentAsRecipe()}
+              className="flex items-center gap-1.5 border border-chef-border bg-chef-bg hover:border-indigo-500/40 text-[11px] text-chef-muted hover:text-chef-text px-2.5 py-1.5 rounded-lg transition-colors"
+            >
+              <Save size={11} /> {selectedRecipeId ? 'Update' : 'Save'}
+            </button>
+          )}
+
           <button onClick={() => void handleRun()} disabled={running}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
           >
@@ -1506,8 +2098,415 @@ export default function QueryPage() {
           </button>
         </div>
 
+        {!isAiMode && !isRedisMode && (
+          <div className="border-b border-chef-border bg-chef-bg/40 px-4 py-2 shrink-0 flex items-center gap-2">
+            {([
+              ['query', 'Query', Code2],
+              ['designer', 'Designer', LayoutTemplate],
+              ['preview', 'Preview', Eye],
+            ] as const).map(([tab, label, Icon]) => (
+              <button
+                key={tab}
+                onClick={() => setBuilderTab(tab)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] transition-colors ${
+                  builderTab === tab
+                    ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-300'
+                    : 'border-chef-border bg-chef-bg text-chef-muted hover:text-chef-text'
+                }`}
+              >
+                <Icon size={11} /> {label}
+              </button>
+            ))}
+            {draftRecipe && (
+              <span className="ml-auto text-[10px] text-chef-muted font-mono">
+                {draftVariables.filter(variable => !variable.stale).length} vars · {sourceBindings.length} sources
+              </span>
+            )}
+          </div>
+        )}
+
+        {!isAiMode && !isRedisMode && builderTab === 'preview' && draftRecipe && draftLayout && (
+          <div className="border-b border-chef-border bg-chef-card/60 px-4 py-3 shrink-0">
+            <div className="flex items-start gap-3">
+              <div className={`shrink-0 mt-0.5 rounded-lg px-2 py-1 text-[10px] font-semibold uppercase tracking-widest ${
+                draftLayout.accent === 'cyan' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30' :
+                draftLayout.accent === 'amber' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' :
+                draftLayout.accent === 'emerald' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
+                'bg-indigo-500/10 text-indigo-400 border border-indigo-500/30'
+              }`}>
+                Recipe Card
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-chef-text">{draftLayout.title ?? draftRecipe.name}</div>
+                <div className="text-[11px] text-chef-muted mt-1">{draftLayout.subtitle ?? draftRecipe.description}</div>
+                <div className="mt-3 space-y-3">
+                  {draftLayout.sections.map(section => (
+                    <div key={section.id} className="rounded-xl border border-chef-border bg-chef-bg/60 p-3">
+                      <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted mb-2">{section.title}</div>
+                      <div className="space-y-2">
+                        {section.rows.map(row => (
+                          <div key={row.id} className="grid grid-cols-6 gap-2">
+                            {row.widgetIds.map(widgetId => {
+                              const widget = draftLayout.widgets.find(item => item.id === widgetId)
+                              if (!widget || widget.hidden) return null
+                              const variable = draftVariables.find(item => item.name === widget.variableName)
+                              const colSpan = widget.width === 'full' ? 'col-span-6' : widget.width === 'half' ? 'col-span-3' : 'col-span-2'
+                              if (widget.variableName === '__timeWindow__') {
+                                return (
+                                  <label key={widget.id} className={`${colSpan} block`}>
+                                    <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted mb-1">Global Time Window</div>
+                                    <select
+                                      value={globalTimeWindow}
+                                      onChange={e => setGlobalTimeWindow(e.target.value)}
+                                      className="w-full bg-chef-bg border border-chef-border rounded px-2 py-1.5 text-[11px] font-mono text-chef-text"
+                                    >
+                                      {GLOBAL_TIME_WINDOWS.map(window => <option key={window.value} value={window.value}>{window.label}</option>)}
+                                    </select>
+                                  </label>
+                                )
+                              }
+                              if (!variable) return null
+                              return (
+                                <label key={widget.id} className={`${colSpan} block`}>
+                                  <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted mb-1">{variable.label}</div>
+                                  {variable.type === 'boolean' ? (
+                                    <select
+                                      value={String(recipeValues[variable.name] ?? variable.defaultValue ?? 'false')}
+                                      onChange={e => setRecipeValues(prev => ({ ...prev, [variable.name]: e.target.value === 'true' }))}
+                                      className="w-full bg-chef-bg border border-chef-border rounded px-2 py-1.5 text-[11px] font-mono text-chef-text"
+                                    >
+                                      <option value="true">true</option>
+                                      <option value="false">false</option>
+                                    </select>
+                                  ) : variable.type === 'enum' ? (
+                                    <select
+                                      value={String(recipeValues[variable.name] ?? variable.defaultValue ?? variable.options?.[0] ?? '')}
+                                      onChange={e => setRecipeValues(prev => ({ ...prev, [variable.name]: e.target.value }))}
+                                      className="w-full bg-chef-bg border border-chef-border rounded px-2 py-1.5 text-[11px] font-mono text-chef-text"
+                                    >
+                                      {(variable.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      value={String(recipeValues[variable.name] ?? variable.defaultValue ?? '')}
+                                      onChange={e => setRecipeValues(prev => ({ ...prev, [variable.name]: variable.type === 'number' ? Number(e.target.value) : e.target.value }))}
+                                      className="w-full bg-chef-bg border border-chef-border rounded px-2 py-1.5 text-[11px] font-mono text-chef-text"
+                                      placeholder={variable.description ?? variable.name}
+                                    />
+                                  )}
+                                  {variable.stale && <div className="mt-1 text-[10px] text-amber-400">Stale variable</div>}
+                                </label>
+                              )
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-chef-muted">
+                  {sourceBindings.map(binding => (
+                    <span key={binding.id} className="px-2 py-1 rounded-md border border-chef-border bg-chef-bg font-mono">
+                      {binding.alias} → {allSourceOptions.find(option => option.sourceId === binding.sourceId && option.sourceType === binding.sourceType)?.name ?? binding.sourceId}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!isAiMode && !isRedisMode && builderTab === 'designer' && draftRecipe && draftLayout && (
+          <div className="border-b border-chef-border bg-chef-card/40 shrink-0">
+            <div className="grid grid-cols-[320px_minmax(0,1fr)] gap-0 max-h-[420px]">
+              <div className="border-r border-chef-border p-4 overflow-auto space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-chef-text">Inferred Variables</div>
+                  <button onClick={addSection} className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors">+ section</button>
+                </div>
+                <div className="rounded-xl border border-chef-border bg-chef-bg p-3 space-y-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted">Recipe</div>
+                  <input
+                    value={draftRecipe.name}
+                    onChange={e => setDraftRecipe(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                    className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                    placeholder="Recipe name"
+                  />
+                  <textarea
+                    value={draftRecipe.description}
+                    onChange={e => setDraftRecipe(prev => prev ? { ...prev, description: e.target.value } : prev)}
+                    className="w-full min-h-20 resize-none bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                    placeholder="Recipe description"
+                  />
+                </div>
+                <div className="rounded-xl border border-chef-border bg-chef-bg p-3 space-y-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted">Card Shell</div>
+                  <input
+                    value={draftLayout.title ?? ''}
+                    onChange={e => updateDraftLayout(layout => ({ ...layout, title: e.target.value }))}
+                    className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                    placeholder="Card title"
+                  />
+                  <input
+                    value={draftLayout.subtitle ?? ''}
+                    onChange={e => updateDraftLayout(layout => ({ ...layout, subtitle: e.target.value }))}
+                    className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                    placeholder="Card subtitle"
+                  />
+                  <select
+                    value={draftLayout.accent ?? 'indigo'}
+                    onChange={e => updateDraftLayout(layout => ({ ...layout, accent: e.target.value as RecipeLayout['accent'] }))}
+                    className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                  >
+                    {['indigo', 'cyan', 'emerald', 'amber'].map(option => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  {draftVariables.map(variable => (
+                    <button
+                      key={variable.name}
+                      onClick={() => setSelectedVariableName(variable.name)}
+                      className={`w-full text-left rounded-xl border px-3 py-2 transition-colors ${
+                        selectedVariableName === variable.name
+                          ? 'border-indigo-500/50 bg-indigo-500/10'
+                          : variable.stale
+                          ? 'border-amber-500/40 bg-amber-500/10'
+                          : 'border-chef-border bg-chef-bg hover:bg-chef-card'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-semibold text-chef-text">{variable.label}</span>
+                        <span className="text-[10px] font-mono text-chef-muted">{variable.type}</span>
+                        {variable.origin && <span className="ml-auto text-[9px] font-mono text-chef-border">{variable.origin}</span>}
+                      </div>
+                      <div className="text-[10px] text-chef-muted mt-1 font-mono">{variable.name}</div>
+                      {variable.stale && <div className="text-[10px] text-amber-400 mt-1">No longer referenced in the query</div>}
+                    </button>
+                  ))}
+                </div>
+
+                {selectedVariable && (
+                  <div className="rounded-xl border border-chef-border bg-chef-bg p-3 space-y-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted">Variable Details</div>
+                    <input
+                      value={selectedVariable.label}
+                      onChange={e => updateDraftVariable(selectedVariable.name, { label: e.target.value })}
+                      className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                      placeholder="Label"
+                    />
+                    <input
+                      value={selectedVariable.description ?? ''}
+                      onChange={e => updateDraftVariable(selectedVariable.name, { description: e.target.value })}
+                      className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                      placeholder="Description"
+                    />
+                    <select
+                      value={selectedVariable.type}
+                      onChange={e => updateDraftVariable(selectedVariable.name, { type: e.target.value as RecipeVariable['type'], control: e.target.value === 'boolean' ? 'boolean' : e.target.value === 'number' ? 'number' : e.target.value === 'enum' ? 'enum' : e.target.value === 'date' ? 'date' : e.target.value === 'datetime' ? 'datetime' : e.target.value === 'timeWindow' ? 'timeWindow' : 'text' })}
+                      className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                    >
+                      {['string', 'number', 'boolean', 'date', 'datetime', 'enum', 'timeWindow'].map(option => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                    <input
+                      value={selectedVariable.defaultValue == null ? '' : String(selectedVariable.defaultValue)}
+                      onChange={e => updateDraftVariable(selectedVariable.name, { defaultValue: selectedVariable.type === 'number' ? Number(e.target.value) : selectedVariable.type === 'boolean' ? e.target.value === 'true' : e.target.value })}
+                      className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                      placeholder="Default value"
+                    />
+                    <label className="flex items-center gap-2 text-[11px] text-chef-muted">
+                      <input
+                        type="checkbox"
+                        checked={selectedVariable.required ?? true}
+                        onChange={e => updateDraftVariable(selectedVariable.name, { required: e.target.checked })}
+                      />
+                      required
+                    </label>
+                    {selectedVariable.type === 'enum' && (
+                      <input
+                        value={(selectedVariable.options ?? []).join(', ')}
+                        onChange={e => updateDraftVariable(selectedVariable.name, { options: e.target.value.split(',').map(part => part.trim()).filter(Boolean) })}
+                        className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                        placeholder="enum1, enum2"
+                      />
+                    )}
+                    {selectedVariable.type === 'number' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="number"
+                          value={selectedVariable.validation?.min ?? ''}
+                          onChange={e => updateDraftVariable(selectedVariable.name, {
+                            validation: {
+                              ...selectedVariable.validation,
+                              min: e.target.value === '' ? undefined : Number(e.target.value),
+                            },
+                          })}
+                          className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                          placeholder="Min"
+                        />
+                        <input
+                          type="number"
+                          value={selectedVariable.validation?.max ?? ''}
+                          onChange={e => updateDraftVariable(selectedVariable.name, {
+                            validation: {
+                              ...selectedVariable.validation,
+                              max: e.target.value === '' ? undefined : Number(e.target.value),
+                            },
+                          })}
+                          className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                          placeholder="Max"
+                        />
+                      </div>
+                    )}
+                    {selectedVariable.type !== 'number' && selectedVariable.type !== 'boolean' && (
+                      <input
+                        value={selectedVariable.validation?.pattern ?? ''}
+                        onChange={e => updateDraftVariable(selectedVariable.name, {
+                          validation: {
+                            ...selectedVariable.validation,
+                            pattern: e.target.value || undefined,
+                          },
+                        })}
+                        className="w-full bg-chef-surface border border-chef-border rounded px-2 py-1.5 text-[11px] text-chef-text"
+                        placeholder="Validation regex (optional)"
+                      />
+                    )}
+                    {selectedVariable.stale && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => hideVariableWidgets(selectedVariable.name)}
+                          className="px-2 py-1 rounded border border-chef-border text-[10px] text-chef-muted hover:text-chef-text transition-colors"
+                        >
+                          hide widgets
+                        </button>
+                        <button
+                          onClick={() => removeStaleVariable(selectedVariable.name)}
+                          className="px-2 py-1 rounded border border-rose-500/30 text-[10px] text-rose-300 hover:text-rose-200 transition-colors"
+                        >
+                          remove stale
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 overflow-auto space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-chef-text">Form Layout</div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => autoPlaceWidgets('compact')} className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">auto compact</button>
+                    <button onClick={() => autoPlaceWidgets('stacked')} className="text-[10px] text-chef-muted hover:text-chef-text transition-colors">stacked</button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-chef-border bg-chef-bg p-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-chef-muted mb-2">Unplaced</div>
+                  <div
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => {
+                      e.preventDefault()
+                      if (dragWidgetRef.current) moveWidgetToUnplaced(dragWidgetRef.current)
+                    }}
+                    className="min-h-14 rounded-lg border border-dashed border-chef-border p-2 flex flex-wrap gap-2"
+                  >
+                    {draftLayout.unplacedWidgetIds.map(widgetId => {
+                      const widget = draftLayout.widgets.find(item => item.id === widgetId)
+                      const variable = widget ? draftVariables.find(item => item.name === widget.variableName) : null
+                      if (!widget) return null
+                      return (
+                        <button
+                          key={widget.id}
+                          draggable
+                          onDragStart={() => { dragWidgetRef.current = widget.id }}
+                          onClick={() => widget.variableName !== '__timeWindow__' && setSelectedVariableName(widget.variableName)}
+                          className="flex items-center gap-2 px-2 py-1 rounded-md border border-chef-border bg-chef-surface text-[11px] text-chef-text"
+                        >
+                          <GripVertical size={11} className="text-chef-muted" />
+                          <span>{variable?.label ?? 'Global Time Window'}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {draftLayout.sections.map(section => (
+                  <div key={section.id} className="rounded-xl border border-chef-border bg-chef-bg p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <input
+                        value={section.title}
+                        onChange={e => updateDraftLayout(layout => ({
+                          ...layout,
+                          sections: layout.sections.map(item => item.id === section.id ? { ...item, title: e.target.value } : item),
+                        }))}
+                        className="flex-1 bg-chef-surface border border-chef-border rounded px-2 py-1 text-[11px] text-chef-text"
+                      />
+                      <button onClick={() => addRow(section.id)} className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors">+ row</button>
+                    </div>
+                    <div className="space-y-2">
+                      {section.rows.map(row => (
+                        <div
+                          key={row.id}
+                          onDragOver={e => e.preventDefault()}
+                          onDrop={e => {
+                            e.preventDefault()
+                            if (dragWidgetRef.current) placeWidget(dragWidgetRef.current, section.id, row.id)
+                          }}
+                          className="grid grid-cols-6 gap-2 min-h-14 rounded-lg border border-dashed border-chef-border p-2"
+                        >
+                          {row.widgetIds.map(widgetId => {
+                            const widget = draftLayout.widgets.find(item => item.id === widgetId)
+                            const variable = widget ? draftVariables.find(item => item.name === widget.variableName) : null
+                            if (!widget) return null
+                            const colSpan = widget.width === 'full' ? 'col-span-6' : widget.width === 'half' ? 'col-span-3' : 'col-span-2'
+                            return (
+                              <div
+                                key={widget.id}
+                                draggable
+                                onDragStart={() => { dragWidgetRef.current = widget.id }}
+                                className={`${colSpan} rounded-lg border border-chef-border bg-chef-surface p-2 text-[11px]`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <GripVertical size={11} className="text-chef-muted" />
+                                  <button
+                                    onClick={() => widget.variableName !== '__timeWindow__' && setSelectedVariableName(widget.variableName)}
+                                    className="text-chef-text hover:text-indigo-300 transition-colors"
+                                  >
+                                    {variable?.label ?? 'Global Time Window'}
+                                  </button>
+                                  {widget.stale && <span className="ml-auto text-[9px] text-amber-400">stale</span>}
+                                </div>
+                                <div className="mt-2 flex items-center gap-2">
+                                  <select
+                                    value={widget.width}
+                                    onChange={e => updateWidget(widget.id, { width: e.target.value as RecipeWidgetWidth })}
+                                    className="bg-chef-bg border border-chef-border rounded px-1.5 py-1 text-[10px] text-chef-text"
+                                  >
+                                    <option value="full">full</option>
+                                    <option value="half">half</option>
+                                    <option value="third">third</option>
+                                  </select>
+                                  <button onClick={() => updateWidget(widget.id, { hidden: !widget.hidden })} className="text-[10px] text-chef-muted hover:text-chef-text transition-colors">
+                                    {widget.hidden ? 'show' : 'hide'}
+                                  </button>
+                                  <button onClick={() => moveWidgetToUnplaced(widget.id)} className="text-[10px] text-chef-muted hover:text-chef-text transition-colors">
+                                    unplace
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Editor + results */}
-        <div className="flex-1 flex flex-col min-h-0">
+        <div ref={editorShellRef} className="flex-1 flex flex-col min-h-0">
 
           {/* Code area */}
           <div className="flex-1 flex min-h-0 bg-chef-bg"
@@ -1601,7 +2600,12 @@ export default function QueryPage() {
 
           {/* Results / error panel */}
           {(results || running || queryError) && (
-            <div className="border-t-2 border-indigo-500/30 bg-chef-surface flex flex-col" style={{ maxHeight: '45%', minHeight: '160px' }}>
+            <div className="border-t-2 border-indigo-500/30 bg-chef-surface flex flex-col" style={{ height: resultsPanelHeight, minHeight: '180px' }}>
+              <div
+                onMouseDown={() => setResizingResults(true)}
+                className={`h-2 shrink-0 cursor-row-resize border-b border-chef-border/50 bg-gradient-to-b from-indigo-500/20 to-transparent ${resizingResults ? 'bg-indigo-500/20' : ''}`}
+                title="Drag to resize results"
+              />
               <div className="flex items-center gap-3 px-4 py-2 border-b border-chef-border shrink-0">
                 <div className="flex items-center gap-1.5 text-xs font-medium">
                   <Table size={12} className="text-indigo-400" />
@@ -1648,6 +2652,38 @@ export default function QueryPage() {
                   <X size={12} />
                 </button>
               </div>
+
+              {results?.renderedQuery && (
+                <div className="px-4 py-2.5 border-b border-chef-border bg-chef-bg/70 text-[11px]">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="text-chef-text font-semibold">Execution</span>
+                    {results.executionMode && <span className="px-1.5 py-0.5 rounded border border-chef-border bg-chef-card font-mono text-chef-muted">{results.executionMode}</span>}
+                    {results.timeWindow && <span className="px-1.5 py-0.5 rounded border border-chef-border bg-chef-card font-mono text-cyan-400">{results.timeWindow.label}</span>}
+                    {results.recipeId && <span className="px-1.5 py-0.5 rounded border border-chef-border bg-chef-card font-mono text-indigo-400">{results.recipeId}</span>}
+                  </div>
+                  {results.sourceBindings && results.sourceBindings.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1.5">
+                      {results.sourceBindings.map(binding => (
+                        <span key={`${binding.alias}-${binding.sourceId}`} className="px-1.5 py-0.5 rounded border border-chef-border bg-chef-card text-chef-muted font-mono">
+                          {binding.alias} → {binding.sourceId}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-chef-muted mb-1">Rendered query</div>
+                  <pre className="font-mono whitespace-pre-wrap text-chef-text">{results.renderedQuery}</pre>
+                  {results.boundVariables && Object.keys(results.boundVariables).length > 0 && (
+                    <div className="mt-2 text-chef-muted">
+                      Variables: <span className="font-mono text-chef-text">{JSON.stringify(results.boundVariables)}</span>
+                    </div>
+                  )}
+                  {results.warnings && results.warnings.length > 0 && (
+                    <div className="mt-2 text-amber-400">
+                      {results.warnings.join(' · ')}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {running ? (
                 <div className="flex-1 flex items-center justify-center gap-3 text-chef-muted">

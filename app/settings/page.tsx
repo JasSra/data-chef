@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Settings, Shield, Bell, Cpu, ChevronRight, CheckCircle2, Copy, Eye, EyeOff,
-  Globe, AlertTriangle, Zap, Loader2, RefreshCw, Radar,
+  Globe, AlertTriangle, Zap, Loader2, RefreshCw, Radar, Palette,
 } from 'lucide-react'
 import { useAppSettings } from '@/components/SettingsProvider'
 import { REGION_OPTIONS, ROLE_OPTIONS, TIMEZONE_OPTIONS, type AppSettings } from '@/lib/app-settings-schema'
 
-type Section = 'workspace' | 'query-engine' | 'api-keys' | 'notifications' | 'network-discovery' | 'danger'
+type Section = 'workspace' | 'branding' | 'query-engine' | 'api-keys' | 'notifications' | 'network-discovery' | 'danger'
 
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -163,6 +163,7 @@ function cloneSettings(settings: AppSettings): AppSettings {
 
 export default function SettingsPage() {
   const { settings, loading, saveSettings, rotateKey, purgeData, deleteWorkspace } = useAppSettings()
+  const productName = settings?.branding.productName ?? 'dataChef'
   const [section, setSection] = useState<Section>('workspace')
   const [draft, setDraft] = useState<AppSettings | null>(null)
   const [datasets, setDatasets] = useState<Array<{ id: string; name: string; queryDataset: string | null }>>([])
@@ -221,6 +222,7 @@ export default function SettingsPage() {
 
   const navItems: { id: Section; icon: React.ElementType; label: string }[] = [
     { id: 'workspace', icon: Globe, label: 'Workspace' },
+    { id: 'branding', icon: Palette, label: 'Branding' },
     { id: 'query-engine', icon: Cpu, label: 'Query Engine' },
     { id: 'api-keys', icon: Shield, label: 'API Keys' },
     { id: 'notifications', icon: Bell, label: 'Notifications' },
@@ -262,7 +264,7 @@ export default function SettingsPage() {
         </nav>
         <div className="px-3 py-3 border-t border-chef-border text-[10px] font-mono text-chef-muted space-y-0.5">
           <div>workspace: {draft.workspace.workspaceName}</div>
-          <div>region: {draft.workspace.region}</div>
+          <div>region: {draft.tenant.region}</div>
           <div className="text-indigo-400">owner: {draft.owner.role}</div>
         </div>
       </div>
@@ -273,7 +275,7 @@ export default function SettingsPage() {
             <div>
               <div className="mb-6">
                 <h2 className="text-base font-bold text-chef-text">Workspace</h2>
-                <p className="text-xs text-chef-muted mt-1">Configure your workspace identity, ownership, and regional settings.</p>
+                <p className="text-xs text-chef-muted mt-1">Configure your tenant identity, data residency region, and operating timezone.</p>
               </div>
               <div className="bg-chef-card border border-chef-border rounded-xl divide-y divide-chef-border px-5">
                 <Field label="Company name" hint="Shown during setup and workspace administration">
@@ -282,11 +284,30 @@ export default function SettingsPage() {
                 <Field label="Workspace name" hint="Shown in the sidebar and top bar">
                   <TextInput value={draft.workspace.workspaceName} onChange={value => setField('workspace', { ...draft.workspace, workspaceName: value })} placeholder="my-workspace" />
                 </Field>
-                <Field label="Region" hint="Primary residency region for this workspace">
-                  <SelectInput value={draft.workspace.region} onChange={value => setField('workspace', { ...draft.workspace, region: value })} options={[...REGION_OPTIONS]} />
+                <Field label="Tenant slug" hint="Stable internal identifier for this tenant">
+                  <TextInput value={draft.tenant.slug} onChange={value => setField('tenant', { ...draft.tenant, slug: value })} placeholder="customer-a" />
                 </Field>
-                <Field label="Timezone" hint="Used for scheduled runs and timestamps">
-                  <SelectInput value={draft.workspace.timezone} onChange={value => setField('workspace', { ...draft.workspace, timezone: value })} options={[...TIMEZONE_OPTIONS]} />
+                <Field label="Hostnames" hint="Comma-separated hostnames that resolve to this tenant">
+                  <TextInput
+                    value={draft.tenant.hostnames.join(', ')}
+                    onChange={value => setField('tenant', {
+                      ...draft.tenant,
+                      hostnames: value.split(',').map(item => item.trim()).filter(Boolean),
+                    })}
+                    placeholder="localhost, tenant.example.com"
+                  />
+                </Field>
+                <Field label="Region" hint="Controls where this tenant's data is stored and processed">
+                  <SelectInput value={draft.tenant.region} onChange={value => {
+                    setField('tenant', { ...draft.tenant, region: value })
+                    setField('workspace', { ...draft.workspace, region: value })
+                  }} options={[...REGION_OPTIONS]} />
+                </Field>
+                <Field label="Timezone" hint="Used for timestamps, schedules, and reporting labels">
+                  <SelectInput value={draft.tenant.timezone} onChange={value => {
+                    setField('tenant', { ...draft.tenant, timezone: value })
+                    setField('workspace', { ...draft.workspace, timezone: value })
+                  }} options={[...TIMEZONE_OPTIONS]} />
                 </Field>
                 <Field label="Owner name" hint="Primary workspace operator">
                   <TextInput value={draft.owner.name} onChange={value => setField('owner', { ...draft.owner, name: value })} />
@@ -299,6 +320,58 @@ export default function SettingsPage() {
                 </Field>
                 <Field label="Owner role" hint="Displayed in the workspace footer">
                   <SelectInput value={draft.owner.role} onChange={value => setField('owner', { ...draft.owner, role: value })} options={[...ROLE_OPTIONS]} />
+                </Field>
+              </div>
+            </div>
+          )}
+
+          {section === 'branding' && (
+            <div>
+              <div className="mb-6">
+                <h2 className="text-base font-bold text-chef-text">Branding</h2>
+                <p className="text-xs text-chef-muted mt-1">White-label the shell, about page, support links, and default product identity for this tenant.</p>
+              </div>
+              <div className="bg-chef-card border border-chef-border rounded-xl divide-y divide-chef-border px-5">
+                <Field label="Product name" hint="Shown in the shell and About page">
+                  <TextInput value={draft.branding.productName} onChange={value => setField('branding', { ...draft.branding, productName: value })} />
+                </Field>
+                <Field label="Logo mode" hint="Controls whether the shell shows the icon, wordmark, or both">
+                  <SelectInput
+                    value={draft.branding.logoMode}
+                    onChange={value => setField('branding', { ...draft.branding, logoMode: value as 'icon' | 'wordmark' | 'both' })}
+                    options={[
+                      { value: 'both', label: 'Icon + wordmark' },
+                      { value: 'icon', label: 'Icon only' },
+                      { value: 'wordmark', label: 'Wordmark only' },
+                    ]}
+                  />
+                </Field>
+                <Field label="Logo URL" hint="Optional custom logo or icon used in the shell">
+                  <TextInput value={draft.branding.logoUrl ?? ''} onChange={value => setField('branding', { ...draft.branding, logoUrl: value })} />
+                </Field>
+                <Field label="Favicon URL" hint="Optional browser/app icon for this tenant">
+                  <TextInput value={draft.branding.faviconUrl ?? ''} onChange={value => setField('branding', { ...draft.branding, faviconUrl: value })} />
+                </Field>
+                <Field label="Website URL" hint="Primary external destination for this tenant">
+                  <TextInput value={draft.branding.websiteUrl ?? ''} onChange={value => setField('branding', { ...draft.branding, websiteUrl: value })} />
+                </Field>
+                <Field label="Support URL" hint="Used for operator-facing support links">
+                  <TextInput value={draft.branding.supportUrl ?? ''} onChange={value => setField('branding', { ...draft.branding, supportUrl: value })} />
+                </Field>
+                <Field label="Parent company" hint="Shown in the footer and About page">
+                  <TextInput value={draft.branding.parentCompanyLabel ?? ''} onChange={value => setField('branding', { ...draft.branding, parentCompanyLabel: value })} />
+                </Field>
+                <Field label="Primary color" hint="Reserved for brand theming tokens">
+                  <TextInput value={draft.branding.primaryColor} onChange={value => setField('branding', { ...draft.branding, primaryColor: value })} mono />
+                </Field>
+                <Field label="Accent color" hint="Reserved for secondary brand theming tokens">
+                  <TextInput value={draft.branding.accentColor} onChange={value => setField('branding', { ...draft.branding, accentColor: value })} mono />
+                </Field>
+                <Field label="About headline" hint="Hero line on the About page">
+                  <TextInput value={draft.branding.aboutHeadline ?? ''} onChange={value => setField('branding', { ...draft.branding, aboutHeadline: value })} />
+                </Field>
+                <Field label="About body" hint="Summary copy used on the About page">
+                  <TextInput value={draft.branding.aboutBody ?? ''} onChange={value => setField('branding', { ...draft.branding, aboutBody: value })} />
                 </Field>
               </div>
             </div>
@@ -358,7 +431,7 @@ export default function SettingsPage() {
             <div>
               <div className="mb-6">
                 <h2 className="text-base font-bold text-chef-text">Notifications</h2>
-                <p className="text-xs text-chef-muted mt-1">Choose when and where dataChef alerts the workspace owner.</p>
+                <p className="text-xs text-chef-muted mt-1">Choose when and where {productName} alerts the workspace owner.</p>
               </div>
 
               <div className="space-y-4">
@@ -418,7 +491,7 @@ export default function SettingsPage() {
 
               <div className="space-y-4">
                 <div className="bg-chef-card border border-chef-border rounded-xl px-5 divide-y divide-chef-border">
-                  <Field label="Enable discovery" hint="Allows dataChef to scan private-network hosts for supported connector types.">
+                  <Field label="Enable discovery" hint={`Allows ${productName} to scan private-network hosts for supported connector types.`}>
                     <Toggle value={draft.networkDiscovery.enabled} onChange={value => setField('networkDiscovery', { ...draft.networkDiscovery, enabled: value })} />
                   </Field>
                   <Field label="Scan during setup" hint="Run an initial discovery scan when a new workspace completes setup.">

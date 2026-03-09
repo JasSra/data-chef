@@ -5,17 +5,16 @@
  * Events:
  *   { type: 'start',      pipelineId, name, totalSteps }
  *   { type: 'step_start', stepIndex, label, rowsIn? }
- *   { type: 'step_done',  stepIndex, label, rowsOut, durationMs }
+ *   { type: 'step_done',  stepIndex, label, rowsIn, rowsOut, removed, durationMs, throughputPerSec }
  *   { type: 'step_error', stepIndex, label, message }
  *   { type: 'log',        stepIndex, message }
+ *   { type: 'result',     columns, rows, rowCount, summary, stepMetrics }
  *   { type: 'done',       status: 'succeeded'|'failed', stepsCompleted, durationMs }
  */
 
 import { NextRequest } from 'next/server'
-import { PIPELINE_MAP, workerStart, workerEnd, recordRun } from '@/lib/pipelines'
-import { executePipelineStep, loadPipelineSourceRows } from '@/lib/pipeline-runtime'
-import { inferSchema } from '@/lib/runtime-data'
-import { materializeDataset } from '@/lib/datasets'
+import { getPipeline, workerStart, workerEnd, recordRun, setLatestRunResult, type StepRunMetric, type PipelineRunSummary } from '@/lib/pipelines'
+import { executePipelineStep, loadPipelineSourceRows, previewCell } from '@/lib/pipeline-runtime'
 
 function sse(data: object) {
   return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)
@@ -25,7 +24,7 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const pipeline = PIPELINE_MAP.get(params.id)
+  const pipeline = getPipeline(params.id)
 
   if (!pipeline) {
     return new Response(
@@ -39,9 +38,12 @@ export async function POST(
   const stream = new ReadableStream({
     async start(controller) {
       const totalStart    = performance.now()
+      const startedAt     = Date.now()
       let finalStatus: 'succeeded' | 'failed' = 'succeeded'
       let stepsCompleted  = 0
       let failed          = false
+      let failedMessage: string | null = null
+      const stepMetrics: StepRunMetric[] = []
 
       try {
         const runtimeSteps = pipeline.runtimeSteps
@@ -62,8 +64,9 @@ export async function POST(
           for (let i = 0; i < runtimeSteps.length && !failed; i++) {
             const step = runtimeSteps[i]
             const stepStart = performance.now()
+            const rowsIn = rows.length
 
-            controller.enqueue(sse({ type: 'step_start', stepIndex: i, label: step.label, rowsIn: rows.length }))
+            controller.enqueue(sse({ type: 'step_start', stepIndex: i, label: step.label, rowsIn }))
 
             try {
               const result = await executePipelineStep(step, rows)
@@ -71,20 +74,56 @@ export async function POST(
                 controller.enqueue(sse({ type: 'log', stepIndex: i, message: line }))
               }
               rows = result.rows
+              const durationMs = Math.round(performance.now() - stepStart)
+              const throughputPerSec = durationMs > 0 ? Math.round((rowsIn / durationMs) * 1000) : rowsIn
+              const metric: StepRunMetric = {
+                stepIndex: i,
+                stepId: step.id,
+                label: step.label,
+                op: step.op,
+                rowsIn,
+                rowsOut: rows.length,
+                removed: result.removed,
+                failed: false,
+                failedRows: 0,
+                durationMs,
+                throughputPerSec,
+              }
+              stepMetrics.push(metric)
               controller.enqueue(sse({
                 type: 'step_done',
                 stepIndex: i,
+                stepId: step.id,
                 label: step.label,
+                op: step.op,
+                rowsIn,
                 rowsOut: rows.length,
-                durationMs: Math.round(performance.now() - stepStart),
+                removed: result.removed,
+                durationMs,
+                throughputPerSec,
               }))
               stepsCompleted = i + 1
             } catch (e: unknown) {
+              const durationMs = Math.round(performance.now() - stepStart)
+              const message = e instanceof Error ? e.message : String(e)
+              stepMetrics.push({
+                stepIndex: i,
+                stepId: step.id,
+                label: step.label,
+                op: step.op,
+                rowsIn,
+                rowsOut: 0,
+                removed: 0,
+                failed: true,
+                failedRows: rowsIn,
+                durationMs,
+                throughputPerSec: 0,
+              })
               controller.enqueue(sse({
                 type: 'step_error',
                 stepIndex: i,
                 label: step.label,
-                message: e instanceof Error ? e.message : String(e),
+                message,
               }))
               controller.enqueue(sse({
                 type: 'done',
@@ -95,47 +134,57 @@ export async function POST(
               finalStatus = 'failed'
               stepsCompleted = i
               failed = true
+              failedMessage = message
             }
           }
 
-          if (!failed && pipeline.outputTarget?.mode === 'dataset') {
-            const datasetName = pipeline.outputTarget.datasetName?.trim()
-            if (!pipeline.outputTarget.datasetId && !datasetName) {
-              throw new Error('Pipeline output target is missing a dataset name')
+          if (!failed) {
+            const columns = rows[0] ? Object.keys(rows[0]) : []
+            const previewRows = rows.slice(0, 50).map(row => columns.map(column => previewCell(row[column])))
+            const durationMs = Math.round(performance.now() - totalStart)
+            const totalRowsIn = stepMetrics[0]?.rowsIn ?? rows.length
+            const totalRemoved = stepMetrics.reduce((sum, metric) => sum + metric.removed, 0)
+            const failedRows = stepMetrics.reduce((sum, metric) => sum + metric.failedRows, 0)
+            const failedSteps = stepMetrics.filter(metric => metric.failed).length
+            const throughputPerSec = durationMs > 0 ? Math.round((rows.length / durationMs) * 1000) : rows.length
+            const healthScore = Math.max(0, Math.round(
+              100
+              - (failedSteps * 25)
+              - ((failedRows / Math.max(totalRowsIn, 1)) * 50)
+              - ((totalRemoved / Math.max(totalRowsIn, 1)) * 10),
+            ))
+            const summary: PipelineRunSummary = {
+              rowsIn: totalRowsIn,
+              rowsOut: rows.length,
+              removed: totalRemoved,
+              failedRows,
+              failedSteps,
+              totalSteps: runtimeSteps.length,
+              durationMs,
+              throughputPerSec,
+              errorRate: Number((failedRows / Math.max(totalRowsIn, 1)).toFixed(4)),
+              healthScore,
             }
-
-            const schema = inferSchema(rows)
-            const sampleRows = rows.slice(0, 5)
-            const dataset = materializeDataset({
-              existingDatasetId: pipeline.outputTarget.datasetId,
-              name: datasetName || `${pipeline.name} output`,
-              source: 'memory',
-              format: 'JSON',
-              description: `Materialized output from pipeline ${pipeline.name}`,
-              connection: `Pipeline ${pipeline.name}`,
-              sourceRef: {
-                sourceType: pipeline.sourceType ?? 'dataset',
-                sourceId: pipeline.sourceId ?? pipeline.dataset,
-                resource: pipeline.resource,
-              },
-              materialization: {
-                kind: 'pipeline',
-                sourceType: pipeline.sourceType ?? 'dataset',
-                sourceId: pipeline.sourceId ?? pipeline.dataset,
-                resource: pipeline.resource,
-                owningPipelineId: pipeline.id,
-                refreshMode: pipeline.outputTarget.refreshMode ?? 'manual',
-                refreshIntervalMinutes: pipeline.outputTarget.refreshIntervalMinutes ?? null,
-              },
-              schema,
-              sampleRows,
-              totalRows: rows.length,
-            })
+            const latestRun = {
+              pipelineId: pipeline.id,
+              status: 'succeeded' as const,
+              startedAt,
+              durationMs,
+              columns,
+              rows: previewRows,
+              rowCount: rows.length,
+              summary,
+              stepMetrics,
+              error: null,
+            }
+            setLatestRunResult(pipeline.id, latestRun)
             controller.enqueue(sse({
-              type: 'materialized',
-              datasetId: dataset.id,
-              datasetName: dataset.name,
-              rows: rows.length,
+              type: 'result',
+              columns,
+              rows: previewRows,
+              rowCount: rows.length,
+              summary,
+              stepMetrics,
             }))
           }
         } else {
@@ -161,10 +210,33 @@ export async function POST(
               finalStatus    = 'failed'
               stepsCompleted = i
               failed         = true
+              failedMessage  = step.errorMsg ?? 'Step failed'
             } else {
+              const rowsIn = step.rowsIn ?? step.rowsOut ?? 0
+              const rowsOut = step.rowsOut ?? rowsIn
+              const durationMs = Math.round(performance.now() - stepStart)
+              stepMetrics.push({
+                stepIndex: i,
+                stepId: `legacy_${i}`,
+                label: step.label,
+                op: 'legacy',
+                rowsIn,
+                rowsOut,
+                removed: Math.max(0, rowsIn - rowsOut),
+                failed: false,
+                failedRows: 0,
+                durationMs,
+                throughputPerSec: durationMs > 0 ? Math.round((rowsIn / durationMs) * 1000) : rowsIn,
+              })
               controller.enqueue(sse({
                 type: 'step_done', stepIndex: i, label: step.label,
-                rowsOut: step.rowsOut, durationMs: Math.round(performance.now() - stepStart),
+                stepId: `legacy_${i}`,
+                op: 'legacy',
+                rowsIn,
+                rowsOut,
+                removed: Math.max(0, rowsIn - rowsOut),
+                durationMs,
+                throughputPerSec: durationMs > 0 ? Math.round((rowsIn / durationMs) * 1000) : rowsIn,
               }))
               stepsCompleted = i + 1
             }
@@ -180,6 +252,36 @@ export async function POST(
         }
       } finally {
         const durationMs = Math.round(performance.now() - totalStart)
+        if (finalStatus === 'failed') {
+          const totalRowsIn = stepMetrics[0]?.rowsIn ?? 0
+          const totalRemoved = stepMetrics.reduce((sum, metric) => sum + metric.removed, 0)
+          const failedRows = stepMetrics.reduce((sum, metric) => sum + metric.failedRows, 0)
+          const failedSteps = stepMetrics.filter(metric => metric.failed).length
+          const summary: PipelineRunSummary = {
+            rowsIn: totalRowsIn,
+            rowsOut: stepMetrics[stepMetrics.length - 1]?.rowsOut ?? 0,
+            removed: totalRemoved,
+            failedRows,
+            failedSteps,
+            totalSteps: pipeline.runtimeSteps?.length ?? pipeline.steps.length,
+            durationMs,
+            throughputPerSec: 0,
+            errorRate: Number((failedRows / Math.max(totalRowsIn, 1)).toFixed(4)),
+            healthScore: Math.max(0, 100 - failedSteps * 25 - Math.round((failedRows / Math.max(totalRowsIn, 1)) * 50)),
+          }
+          setLatestRunResult(pipeline.id, {
+            pipelineId: pipeline.id,
+            status: 'failed',
+            startedAt,
+            durationMs,
+            columns: [],
+            rows: [],
+            rowCount: 0,
+            summary,
+            stepMetrics,
+            error: failedMessage,
+          })
+        }
         recordRun(pipeline.id, finalStatus, durationMs, stepsCompleted)
         workerEnd()
         controller.close()
