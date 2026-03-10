@@ -12,6 +12,19 @@ import type { SourceType } from '@/lib/datasets'
 import type { QueryRecipe as StoredQueryRecipe, RecipeVariableDefinition } from '@/lib/query-recipes'
 import { inferVariablesFromRecipe, compactLayout, type InferredVariable, type RecipeLayout, type RecipeWidget, type RecipeWidgetWidth } from '@/lib/query-designer'
 
+/* ── Polyfill for crypto.randomUUID ───────────────────────────────────────── */
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  // Fallback for environments where crypto.randomUUID is not available
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 /* ── Types ──────────────────────────────────────────────────────────────────── */
 type Lang = 'sql' | 'jsonpath' | 'jmespath' | 'kql' | 'redis'
 
@@ -656,7 +669,7 @@ export default function QueryPage() {
     if (!dataset) return
     setSourceBindings(prev => {
       if (prev.length > 0) return prev
-      return [{ id: crypto.randomUUID(), alias: 'source_rows', sourceType: dsMeta?.sourceType ?? 'dataset', sourceId: dsMeta?.sourceId ?? dataset, resource: dsMeta?.resource, queryHint: undefined, rowLimit: 500 }]
+      return [{ id: generateUUID(), alias: 'source_rows', sourceType: dsMeta?.sourceType ?? 'dataset', sourceId: dsMeta?.sourceId ?? dataset, resource: dsMeta?.resource, queryHint: undefined, rowLimit: 500 }]
     })
   }, [dataset, dsMeta?.sourceId, dsMeta?.sourceType, dsMeta?.resource])
 
@@ -664,7 +677,7 @@ export default function QueryPage() {
     const meta = allDatasets.find(item => item.id === nextDatasetId)
     setSourceBindings(prev => {
       const primary = {
-        id: prev[0]?.id ?? crypto.randomUUID(),
+        id: prev[0]?.id ?? generateUUID(),
         alias: prev[0]?.alias ?? 'source_rows',
         sourceType: meta?.sourceType ?? 'dataset',
         sourceId: meta?.sourceId ?? nextDatasetId,
@@ -685,7 +698,7 @@ export default function QueryPage() {
     setDraftRecipe(recipe)
     setBuilderTab('preview')
     setSourceBindings(recipe.sources.map(source => ({
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       alias: source.alias,
       sourceType: source.sourceType,
       sourceId: source.sourceId,
@@ -705,7 +718,7 @@ export default function QueryPage() {
     const fallback = allSourceOptions[0]
     if (!fallback) return
     setSourceBindings(prev => [...prev, {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       alias: `source_${prev.length + 1}`,
       sourceType: fallback.sourceType,
       sourceId: fallback.sourceId,
@@ -743,7 +756,7 @@ export default function QueryPage() {
   function addSection() {
     updateDraftLayout(layout => ({
       ...layout,
-      sections: [...layout.sections, { id: crypto.randomUUID(), title: `Section ${layout.sections.length + 1}`, rows: [] }],
+      sections: [...layout.sections, { id: generateUUID(), title: `Section ${layout.sections.length + 1}`, rows: [] }],
     }))
   }
 
@@ -751,7 +764,7 @@ export default function QueryPage() {
     updateDraftLayout(layout => ({
       ...layout,
       sections: layout.sections.map(section => section.id === sectionId
-        ? { ...section, rows: [...section.rows, { id: crypto.randomUUID(), widgetIds: [] }] }
+        ? { ...section, rows: [...section.rows, { id: generateUUID(), widgetIds: [] }] }
         : section),
     }))
   }
@@ -773,7 +786,7 @@ export default function QueryPage() {
               rows: section.rows.map(row => row.id === rowId ? { ...row, widgetIds: [...row.widgetIds, widgetId] } : row),
             }
           }
-          const rows = section.rows.length ? [...section.rows] : [{ id: crypto.randomUUID(), widgetIds: [] }]
+          const rows = section.rows.length ? [...section.rows] : [{ id: generateUUID(), widgetIds: [] }]
           rows[rows.length - 1] = { ...rows[rows.length - 1], widgetIds: [...rows[rows.length - 1].widgetIds, widgetId] }
           return { ...section, rows }
         }),
@@ -835,10 +848,10 @@ export default function QueryPage() {
     const regularWidgets = draftLayout.widgets.filter(widget => widget.variableName !== '__timeWindow__')
     const rows: Array<{ id: string; widgetIds: string[] }> = []
 
-    if (timeWidget) rows.push({ id: crypto.randomUUID(), widgetIds: [timeWidget.id] })
+    if (timeWidget) rows.push({ id: generateUUID(), widgetIds: [timeWidget.id] })
 
     if (mode === 'stacked') {
-      for (const widget of regularWidgets) rows.push({ id: crypto.randomUUID(), widgetIds: [widget.id] })
+      for (const widget of regularWidgets) rows.push({ id: generateUUID(), widgetIds: [widget.id] })
     } else {
       let currentRow: string[] = []
       let currentUnits = 0
@@ -846,28 +859,28 @@ export default function QueryPage() {
       for (const widget of regularWidgets) {
         const units = unitsFor(widget.width)
         if (units === 3) {
-          if (currentRow.length) rows.push({ id: crypto.randomUUID(), widgetIds: currentRow })
-          rows.push({ id: crypto.randomUUID(), widgetIds: [widget.id] })
+          if (currentRow.length) rows.push({ id: generateUUID(), widgetIds: currentRow })
+          rows.push({ id: generateUUID(), widgetIds: [widget.id] })
           currentRow = []
           currentUnits = 0
           continue
         }
         if (currentUnits + units > 3 && currentRow.length) {
-          rows.push({ id: crypto.randomUUID(), widgetIds: currentRow })
+          rows.push({ id: generateUUID(), widgetIds: currentRow })
           currentRow = []
           currentUnits = 0
         }
         currentRow.push(widget.id)
         currentUnits += units
       }
-      if (currentRow.length) rows.push({ id: crypto.randomUUID(), widgetIds: currentRow })
+      if (currentRow.length) rows.push({ id: generateUUID(), widgetIds: currentRow })
     }
 
     updateDraftLayout(layout => ({
       ...layout,
       sections: layout.sections.length
         ? layout.sections.map((section, index) => index === 0 ? { ...section, rows } : section)
-        : [{ id: crypto.randomUUID(), title: 'Inputs', rows }],
+        : [{ id: generateUUID(), title: 'Inputs', rows }],
       unplacedWidgetIds: [],
     }))
   }
@@ -1096,7 +1109,7 @@ export default function QueryPage() {
           }
 
           const entry: HistoryEntry = {
-            id: crypto.randomUUID(), lang: 'kql',
+            id: generateUUID(), lang: 'kql',
             dataset: aiConnectorId ?? 'observability',
             query: effectiveQuery, rowCount: data.rowCount, durationMs: data.durationMs, ts: Date.now(),
           }
@@ -1133,7 +1146,7 @@ export default function QueryPage() {
           if (data.capabilities) setRedisCapabilities(data.capabilities)
         }
         const entry: HistoryEntry = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           lang: 'redis',
           dataset: redisConnectorId ?? 'redis',
           query: effectiveQuery,
@@ -1192,7 +1205,7 @@ export default function QueryPage() {
       if (data.error) {
         setQueryError(data.error)
         const entry: HistoryEntry = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           lang,
           dataset,
           query: effectiveQuery,
@@ -1250,7 +1263,7 @@ export default function QueryPage() {
         }
       }
         const entry: HistoryEntry = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           lang,
           dataset,
           query: effectiveQuery,
@@ -1465,7 +1478,7 @@ export default function QueryPage() {
                     setRedisConnectorId(null)
                     setDataset(h.dataset)
                     if (h.sourceBindings?.length) {
-                      setSourceBindings(h.sourceBindings.map(binding => ({ ...binding, id: crypto.randomUUID() })))
+                      setSourceBindings(h.sourceBindings.map(binding => ({ ...binding, id: generateUUID() })))
                     }
                     if (h.variables) setRecipeValues(h.variables as Record<string, string | number | boolean>)
                     if (h.timeWindow) {

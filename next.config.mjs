@@ -18,6 +18,11 @@ const createNextConfig = (phase) => ({
       'pg',
       'ssh2',
       'ssh2-sftp-client',
+      '@opentelemetry/sdk-node',
+      '@opentelemetry/auto-instrumentations-node',
+      '@opentelemetry/exporter-trace-otlp-http',
+      '@opentelemetry/exporter-metrics-otlp-http',
+      '@grpc/grpc-js',
     ],
   },
 
@@ -36,6 +41,8 @@ const createNextConfig = (phase) => ({
         tls:           false,
         child_process: false,
         path:          false,
+        stream:        false,
+        zlib:          false,
       }
     }
     return config
