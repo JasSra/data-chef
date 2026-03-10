@@ -737,7 +737,7 @@ function EnrichConfig({ config, onChange, schemaFields }: {
     <>
       <Field label="Lookup URL">
         <input className={inputCls} value={config.lookupUrl ?? ''} onChange={e => onChange({ lookupUrl: e.target.value })}
-          placeholder="https://geo.acme.io/v1/lookup" />
+          placeholder="https://geo.threatco.io/v1/lookup" />
       </Field>
       <Field label="Join Key ($.field to look up)">
         <FieldChips fields={schemaFields} onInsert={v => onChange({ joinKey: v })} />
@@ -932,8 +932,8 @@ function WriteConfig({ config, onChange, datasets }: {
             <input className={inputCls} value={config.destPath ?? ''} onChange={e => onChange({ destPath: e.target.value })}
               placeholder={
                 config.destType === 'PG'    ? 'public.billing_clean' :
-                config.destType === 'HTTP'  ? 'https://api.acme.io/ingest' :
-                config.destType === 'local' ? '/tmp/output.parquet' : 's3://acme-data/clean/'
+                config.destType === 'HTTP'  ? 'https://api.threatco.io/ingest' :
+                config.destType === 'local' ? '/tmp/output.parquet' : 's3://threatco-data/clean/'
               } />
           </Field>
         </>

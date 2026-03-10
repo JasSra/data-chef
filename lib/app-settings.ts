@@ -39,14 +39,14 @@ function buildDefaultSettings(): AppSettings {
     setupCompleted: false,
     tenant,
     workspace: {
-      workspaceName: 'acme-labs',
-      companyName: 'Acme Labs',
+      workspaceName: 'threatco',
+      companyName: 'ThreatCo',
       region: tenant.region,
       timezone: tenant.timezone,
     },
     owner: {
       name: 'Jane Doe',
-      email: 'owner@acme-labs.io',
+      email: 'owner@threatco.io',
       role: 'Owner',
     },
     queryEngine: {
@@ -65,7 +65,7 @@ function buildDefaultSettings(): AppSettings {
       pipelineSuccess: false,
       emailEnabled: true,
       slackEnabled: false,
-      emailAddress: 'owner@acme-labs.io',
+      emailAddress: 'owner@threatco.io',
       slackChannel: '#data-alerts',
     },
     networkDiscovery: {

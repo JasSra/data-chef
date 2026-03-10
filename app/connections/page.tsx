@@ -361,7 +361,7 @@ function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit
   function copy() { navigator.clipboard.writeText(endpoint).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 2000) }
 
   return (
-    <div className="flex flex-col h-full overflow-auto animate-slide-in">
+    <div className="flex flex-col h-full min-h-0 overflow-auto animate-slide-in">
       {/* Header */}
       <div className="px-5 py-4 border-b border-chef-border shrink-0">
         <div className="flex items-start gap-3">
@@ -490,6 +490,8 @@ export default function ConnectionsPage() {
   const [jobs, setJobs] = useState<ConnectorJob[]>([])
   const [showJobs, setShowJobs] = useState(false)
   const [transferNotice, setTransferNotice] = useState<{ tone: 'success' | 'error'; msg: string } | null>(null)
+  const [scanLogs, setScanLogs] = useState<string[]>([])
+  const [showScanLogs, setShowScanLogs] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
 
   const showNotice = useCallback((tone: 'success' | 'error', msg: string) => {
@@ -848,10 +850,15 @@ async function cloneConnector(conn: Connection) {
 
   async function runDiscoveryScan() {
     setDiscoveryLoading(true)
+    setScanLogs([])
+    setShowScanLogs(true)
     try {
       const res = await fetch('/api/discovery', { method: 'POST' })
-      const data = await res.json() as DiscoveryOverview
+      const data = await res.json() as DiscoveryOverview & { scan?: { logs?: string[] } }
       setDiscovery(data)
+      if (data.scan?.logs) {
+        setScanLogs(data.scan.logs)
+      }
     } catch {
       showNotice('error', 'Discovery scan failed')
     } finally {
@@ -899,7 +906,7 @@ async function cloneConnector(conn: Connection) {
   return (
     <div className={`grid h-full min-h-0 ${gridCols} transition-all duration-200`}>
       {/* ── Main list ── */}
-      <div className={`flex flex-col overflow-hidden min-h-0 ${hasDetail || hasJobs ? 'xl:border-r xl:border-chef-border' : ''}`}>
+      <div className={`flex flex-col min-h-0 ${hasDetail || hasJobs ? 'xl:border-r xl:border-chef-border' : ''}`}>
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-chef-border shrink-0">
           <div className="flex flex-wrap items-center gap-3">
@@ -1002,7 +1009,28 @@ async function cloneConnector(conn: Connection) {
                 <RefreshCw size={11} className={discoveryLoading || discovery?.running ? 'animate-spin' : ''} />
                 Rescan
               </button>
+              {scanLogs.length > 0 && (
+                <button
+                  onClick={() => setShowScanLogs(v => !v)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-3 py-1.5 text-[11px] text-chef-muted hover:text-chef-text hover:bg-chef-card transition-colors"
+                >
+                  <Terminal size={11} />
+                  {showScanLogs ? 'Hide' : 'Show'} Scan Log
+                </button>
+              )}
             </div>
+
+            {showScanLogs && scanLogs.length > 0 && (
+              <div className="mt-4 rounded-lg border border-chef-border bg-[#0a0c10] p-3 max-h-[300px] overflow-y-auto">
+                <div className="font-mono text-[10px] space-y-0.5">
+                  {scanLogs.map((log, i) => (
+                    <div key={i} className={log.startsWith('═══') ? 'text-indigo-400 font-semibold mt-2' : log.startsWith('✓') ? 'text-emerald-400' : log.includes('error') || log.includes('failed') ? 'text-red-400' : 'text-chef-muted'}>
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {discovery?.enabled && (
               <div className="mt-4 grid gap-3 md:grid-cols-2">

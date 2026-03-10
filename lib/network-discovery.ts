@@ -3,6 +3,8 @@ import 'server-only'
 import os from 'node:os'
 import net from 'node:net'
 import dns from 'node:dns/promises'
+import { exec } from 'node:child_process'
+import util from 'node:util'
 import type { ConnectorId } from '@/components/ConnectorWizard'
 import { readJsonFile, removeJsonFile, writeJsonFile } from '@/lib/json-store'
 import { getAppSettings, saveAppSettings } from '@/lib/app-settings'
@@ -13,6 +15,7 @@ type DiscoverableConnectorType = Extract<ConnectorId, 'postgresql' | 'mysql' | '
 
 export interface DiscoveryCandidate {
   id: string
+  groupId: string
   type: DiscoverableConnectorType
   host: string
   port: number
@@ -43,6 +46,23 @@ export interface DiscoveryOverview {
   candidates: DiscoveryCandidateResponse[]
 }
 
+export interface DiscoveryGroupedCandidate {
+  groupId: string
+  type: DiscoverableConnectorType
+  port: number
+  displayName: string
+  hosts: Array<{
+    host: string
+    confidence: number
+    matchReason: string
+    status: 'new' | 'dismissed' | 'added'
+    lastSeen: string
+    candidateId: string
+  }>
+  totalCount: number
+  highestConfidence: number
+}
+
 export interface DiscoveryConnectorDraft {
   candidateId: string
   type: DiscoverableConnectorType
@@ -66,6 +86,9 @@ interface ScanResult {
   scannedHosts: number
   found: number
   skipped?: boolean
+  logs?: string[]
+  layerSummary?: Array<{ layer: string; count: number; subnets?: string[] }>
+  typeSummary?: Record<string, number>
 }
 
 interface ProbeSpec {
@@ -95,7 +118,7 @@ const COMMON_HOSTNAMES = [
 ] as const
 const CONNECT_TIMEOUT_MS = 220
 const HTTP_TIMEOUT_MS = 450
-const GLOBAL_SCAN_BUDGET = 60
+const GLOBAL_SCAN_BUDGET = 300
 
 const SPECS: ProbeSpec[] = [
   {
@@ -174,6 +197,7 @@ function readState(): DiscoveryStateFile {
     candidates: (state.candidates ?? []).map(candidate => ({
       ...candidate,
       connectorId: candidate.connectorId ?? null,
+      groupId: candidate.groupId ?? `grp-${candidate.type}-${candidate.port}`,
     })),
   }
 }
@@ -236,15 +260,143 @@ function collectLocalTargets(): string[] {
   return [...targets]
 }
 
-async function buildScanTargets(): Promise<string[]> {
-  const resolved = new Set<string>(collectLocalTargets())
+const execAsync = util.promisify(exec)
 
+async function getPublicIp(): Promise<string | null> {
+  try {
+    const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) })
+    return ((await res.json()) as { ip: string }).ip
+  } catch {
+    return null
+  }
+}
+
+async function getTracerouteHops(targetIp: string): Promise<string[]> {
+  try {
+    const cmd = os.platform() === 'win32' ? `tracert -d -w 500 -h 10 ${targetIp}` : `traceroute -n -w 1 -m 10 ${targetIp}`
+    const { stdout } = await execAsync(cmd, { timeout: 15000 })
+    
+    // Match anything that looks like an IP address in the output
+    const match = stdout.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)
+    const privateHops = match ? [...new Set(match)].filter(ip => ip !== targetIp && isPrivateIpv4(ip)) : []
+    console.log('[Discovery] Traceroute hops found:', privateHops)
+    return privateHops
+  } catch (err) {
+    console.error('[Discovery] Traceroute failed:', err)
+    return []
+  }
+}
+
+async function buildScanTargets(): Promise<{ targets: string[]; logs: string[]; layers: Array<{ layer: string; count: number; subnets?: string[] }> }> {
+  const logs: string[] = []
+  const layers: Array<{ layer: string; count: number; subnets?: string[] }> = []
+  
+  logs.push('═══ Building Scan Targets ═══')
+  console.log('\n[Discovery] ═══ Building Scan Targets ═══')
+  
+  const localTargets = collectLocalTargets()
+  const resolved = new Set<string>(localTargets)
+  const intermediateTargets = new Set<string>()
+
+  logs.push(`Layer 1: Local Docker/Container IPs (${localTargets.length} targets)`)
+  console.log(`[Discovery] Layer 1: Local Docker/Container IPs (${localTargets.length} targets)`)
+  layers.push({ layer: 'Local Docker/Container', count: localTargets.length })
+
+  // First add common hostnames which are likely local
+  const hostnamesBefore = resolved.size
   for (const host of COMMON_HOSTNAMES) {
     const addresses = await resolveHostToPrivateIpv4(host)
     for (const address of addresses) resolved.add(address)
   }
+  const hostnamesAdded = resolved.size - hostnamesBefore
+  if (hostnamesAdded > 0) {
+    logs.push(`Layer 2: Common Hostnames (+${hostnamesAdded} targets)`)
+    console.log(`[Discovery] Layer 2: Common Hostnames (+${hostnamesAdded} targets)`)
+    layers.push({ layer: 'Common Hostnames', count: hostnamesAdded })
+  }
 
-  return [...resolved].slice(0, GLOBAL_SCAN_BUDGET)
+  // Add all local network interfaces to ensure we scan their subnets
+  const interfaces = os.networkInterfaces()
+  const hostSubnets = new Set<string>()
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || !isPrivateIpv4(entry.address)) continue
+      const octets = entry.address.split('.').map(Number)
+      if (octets.length !== 4) continue
+      const prefix = `${octets[0]}.${octets[1]}.${octets[2]}`
+      hostSubnets.add(prefix)
+      
+      // Scan wider range for host machine subnet
+      for (let i = 1; i <= 254; i++) {
+        intermediateTargets.add(`${prefix}.${i}`)
+      }
+    }
+  }
+  if (hostSubnets.size > 0) {
+    const subnetList = [...hostSubnets].map(s => `${s}.*`)
+    const msg = `Layer 3: Host Machine Subnets (${subnetList.join(', ')}) = ${intermediateTargets.size} targets`
+    logs.push(msg)
+    console.log(`[Discovery] ${msg}`)
+    layers.push({ layer: 'Host Machine Subnets', count: intermediateTargets.size, subnets: subnetList })
+  }
+
+  // Then trace route to public IP to find gateway networks
+  try {
+    const publicIp = await getPublicIp()
+    const msg = `Layer 4: Traceroute Analysis (Public IP: ${publicIp || 'N/A'})`
+    logs.push(msg)
+    console.log(`[Discovery] ${msg}`)
+    if (publicIp) {
+      const intermediateBefore = intermediateTargets.size
+      const hops = await getTracerouteHops(publicIp)
+      const gatewaySubnets = new Set<string>()
+      for (const hop of hops) {
+        const octets = hop.split('.').map(Number)
+        if (octets.length !== 4) continue
+        const prefix = `${octets[0]}.${octets[1]}.${octets[2]}`
+        gatewaySubnets.add(prefix)
+        
+        // Add gateway and surrounding IPs
+        intermediateTargets.add(`${prefix}.1`)
+        for (let offset = -8; offset <= 8; offset++) {
+          const candidate = octets[3] + offset
+          if (candidate >= 1 && candidate <= 254) {
+            intermediateTargets.add(`${prefix}.${candidate}`)
+          }
+        }
+      }
+      const gatewayAdded = intermediateTargets.size - intermediateBefore
+      if (gatewayAdded > 0) {
+        const subnetList = [...gatewaySubnets].map(s => `${s}.*`)
+        const msg2 = `Layer 4: Gateway Networks (${subnetList.join(', ')}) +${gatewayAdded} targets`
+        logs.push(msg2)
+        console.log(`[Discovery] ${msg2}`)
+        layers.push({ layer: 'Gateway Networks', count: gatewayAdded, subnets: subnetList })
+      }
+    }
+  } catch (err) {
+    console.error('[Discovery] Traceroute error:', err)
+    logs.push(`Traceroute error: ${err}`)
+  }
+
+  // Priority: local targets first, then intermediate networks
+  const orderedTargets = [...resolved, ...intermediateTargets]
+  const finalCount = Math.min(orderedTargets.length, GLOBAL_SCAN_BUDGET)
+  
+  const summary = [
+    '═══ Scan Summary ═══',
+    `Total targets: ${orderedTargets.length}, Budget: ${GLOBAL_SCAN_BUDGET}, Will scan: ${finalCount}`,
+    `Breakdown: Local=${resolved.size}, Host Subnets+Gateways=${intermediateTargets.size}`
+  ]
+  
+  logs.push(...summary)
+  summary.forEach(s => console.log(`[Discovery] ${s}`))
+  
+  return {
+    targets: orderedTargets.slice(0, GLOBAL_SCAN_BUDGET),
+    logs,
+    layers
+  }
 }
 
 function makeDisplayName(type: DiscoverableConnectorType, host: string, port: number): string {
@@ -294,6 +446,56 @@ export function getDiscoveryOverview(options: { includeDismissed?: boolean; incl
 
 export function getDiscoveryCandidate(id: string): DiscoveryCandidate | null {
   return readState().candidates.find(candidate => candidate.id === id) ?? null
+}
+
+export function getGroupedDiscoveryCandidates(options: { includeDismissed?: boolean; includeAdded?: boolean } = {}): DiscoveryGroupedCandidate[] {
+  const state = readState()
+  const candidates = state.candidates.filter(candidate => {
+    if (!options.includeDismissed && candidate.status === 'dismissed') return false
+    if (!options.includeAdded && candidate.status === 'added') return false
+    return true
+  })
+
+  const groups = new Map<string, DiscoveryGroupedCandidate>()
+
+  for (const candidate of candidates) {
+    let group = groups.get(candidate.groupId)
+    if (!group) {
+      const label = {
+        postgresql: 'PostgreSQL',
+        mysql: 'MySQL',
+        mongodb: 'MongoDB',
+        redis: 'Redis',
+        sftp: 'SFTP',
+        s3: 'S3-compatible storage',
+        elasticsearch: 'Elasticsearch / OpenSearch',
+      }[candidate.type]
+      group = {
+        groupId: candidate.groupId,
+        type: candidate.type,
+        port: candidate.port,
+        displayName: `${label} (Port ${candidate.port})`,
+        hosts: [],
+        totalCount: 0,
+        highestConfidence: 0,
+      }
+      groups.set(candidate.groupId, group)
+    }
+
+    group.hosts.push({
+      host: candidate.host,
+      confidence: candidate.confidence,
+      matchReason: candidate.matchReason,
+      status: candidate.status,
+      lastSeen: relativeTime(candidate.lastSeenAt),
+      candidateId: candidate.id,
+    })
+    group.totalCount++
+    group.highestConfidence = Math.max(group.highestConfidence, candidate.confidence)
+  }
+
+  return [...groups.values()]
+    .sort((a, b) => b.highestConfidence - a.highestConfidence)
 }
 
 export function setDiscoveryCandidateStatus(id: string, status: 'new' | 'dismissed'): DiscoveryCandidate | null {
@@ -626,6 +828,7 @@ async function probeHost(host: string): Promise<DiscoveryCandidate[]> {
     const matchReason = verification.ok ? verification.matchReason : heuristicReason
     return {
       id: makeCandidateId(spec.type, host, spec.port),
+      groupId: `grp-${spec.type}-${spec.port}`,
       type: spec.type,
       host,
       port: spec.port,
@@ -655,6 +858,7 @@ function mergeDiscoveredCandidates(discovered: DiscoveryCandidate[], startedAt: 
       prior.host = candidate.host
       prior.port = candidate.port
       prior.type = candidate.type
+      prior.groupId = candidate.groupId
       continue
     }
     existing.set(candidate.id, candidate)
@@ -699,16 +903,66 @@ export async function runNetworkDiscoveryScan(options: { force?: boolean } = {})
   globalThis.__datachefDiscoveryRunning = true
   workerStart()
   try {
-    const hosts = await buildScanTargets()
+    const { targets: hosts, logs, layers } = await buildScanTargets()
     const discoveredMap = new Map<string, DiscoveryCandidate>()
-
+    
+    const scanLogs = [...logs]
+    scanLogs.push('\n═══ Starting Scan ═══')
+    scanLogs.push(`Scanning ${hosts.length} hosts...`)
+    console.log(`\n[Discovery] ═══ Starting Scan ═══`)
+    console.log(`[Discovery] Scanning ${hosts.length} hosts...`)
+    
+    let scanned = 0
+    let lastLogTime = Date.now()
+    
     for (const host of hosts) {
       const discovered = await probeHost(host)
-      for (const candidate of discovered) discoveredMap.set(candidate.id, candidate)
+      for (const candidate of discovered) {
+        discoveredMap.set(candidate.id, candidate)
+        const msg = `✓ Found: ${candidate.type} on ${candidate.host}:${candidate.port} (confidence: ${(candidate.confidence * 100).toFixed(0)}%)`
+        scanLogs.push(msg)
+        console.log(`[Discovery] ${msg}`)
+      }
+      scanned++
+      
+      // Log progress every 50 hosts or every 10 seconds
+      const now = Date.now()
+      if (scanned % 50 === 0 || now - lastLogTime > 10000) {
+        const msg = `Progress: ${scanned}/${hosts.length} hosts scanned, ${discoveredMap.size} services found`
+        scanLogs.push(msg)
+        console.log(`[Discovery] ${msg}`)
+        lastLogTime = now
+      }
     }
 
     const finishedAt = Date.now()
     const discovered = [...discoveredMap.values()]
+    
+    scanLogs.push('\n═══ Scan Complete ═══')
+    scanLogs.push(`Duration: ${((finishedAt - startedAt) / 1000).toFixed(1)}s`)
+    scanLogs.push(`Hosts scanned: ${hosts.length}`)
+    scanLogs.push(`Services found: ${discovered.length}`)
+    
+    console.log(`\n[Discovery] ═══ Scan Complete ═══`)
+    console.log(`[Discovery] Duration: ${((finishedAt - startedAt) / 1000).toFixed(1)}s`)
+    console.log(`[Discovery] Hosts scanned: ${hosts.length}`)
+    console.log(`[Discovery] Services found: ${discovered.length}`)
+    
+    // Group by type for summary
+    const byType = discovered.reduce((acc, c) => {
+      acc[c.type] = (acc[c.type] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+    
+    if (discovered.length > 0) {
+      scanLogs.push('Breakdown by type:')
+      console.log(`[Discovery] Breakdown by type:`)
+      Object.entries(byType).forEach(([type, count]) => {
+        scanLogs.push(`  - ${type}: ${count}`)
+        console.log(`[Discovery]   - ${type}: ${count}`)
+      })
+    }
+    
     mergeDiscoveredCandidates(discovered, startedAt, finishedAt)
     saveAppSettings({
       networkDiscovery: {
@@ -724,6 +978,9 @@ export async function runNetworkDiscoveryScan(options: { force?: boolean } = {})
       durationMs: finishedAt - startedAt,
       scannedHosts: hosts.length,
       found: discovered.length,
+      logs: scanLogs,
+      layerSummary: layers,
+      typeSummary: byType,
     }
   } finally {
     globalThis.__datachefDiscoveryRunning = false

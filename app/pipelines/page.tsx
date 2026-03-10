@@ -177,16 +177,25 @@ function PipelineDAG({ pipeline, runState, selectedStepId, onSelectStep }: {
   onSelectStep: (stepId: string) => void
 }) {
   const { steps, quarantineStep } = pipeline
-  const NODE_W = 152, NODE_H = 70, H_GAP = 56
-  const svgW = steps.length * NODE_W + (steps.length - 1) * H_GAP
-  const svgH = quarantineStep ? 228 : 100
-  const cx = (i: number) => 20 + i * (NODE_W + H_GAP) + NODE_W / 2
-  const mainY = 18, qY = 148
+  const NODE_W = 152, NODE_H = 70, H_GAP = 56, V_GAP = 56
+  const COLS = 4
+  const rows = Math.ceil(steps.length / COLS)
+  
+  const mainYOffset = quarantineStep ? NODE_H + V_GAP : 0
+  const svgW = COLS * NODE_W + (COLS - 1) * H_GAP
+  const mainSvgH = rows * NODE_H + (rows - 1) * V_GAP
+  const svgH = mainSvgH + mainYOffset
+
+  const getPos = (i: number) => {
+    const r = Math.floor(i / COLS)
+    const c = r % 2 === 0 ? (i % COLS) : (COLS - 1 - (i % COLS))
+    return { x: 20 + c * (NODE_W + H_GAP), y: 20 + mainYOffset + r * (NODE_H + V_GAP) }
+  }
 
   return (
     <div className="relative overflow-x-auto pb-2">
-      <div className="relative" style={{ width: svgW + 60, height: svgH }}>
-        <svg className="absolute inset-0 pointer-events-none" width={svgW + 60} height={svgH}>
+      <div className="relative" style={{ width: svgW + 60, height: svgH + 40 }}>
+        <svg className="absolute inset-0 pointer-events-none" width={svgW + 60} height={svgH + 40}>
           <defs>
             {['ok','err','warn','dim'].map(k => (
               <marker key={k} id={`arr-${k}`} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
@@ -197,30 +206,50 @@ function PipelineDAG({ pipeline, runState, selectedStepId, onSelectStep }: {
 
           {steps.map((step, i) => {
             if (i === steps.length - 1) return null
-            const x1 = 20 + i * (NODE_W + H_GAP) + NODE_W
-            const y  = mainY + NODE_H / 2
+            const p1 = getPos(i)
+            const p2 = getPos(i + 1)
+            const r1 = Math.floor(i / COLS)
+            const r2 = Math.floor((i + 1) / COLS)
+
             const rs = runState.stepStates[i]
             const color  = rs === 'done' ? '#22c55e' : rs === 'error' ? '#f43f5e' : rs === 'skip' ? '#334155' : step.status === 'error' ? '#f43f5e' : '#6366f1'
             const marker = rs === 'error' || step.status === 'error' ? 'url(#arr-err)' : rs === 'skip' ? 'url(#arr-dim)' : 'url(#arr-ok)'
             const dash   = rs === 'skip' || step.status === 'skip' ? '5 3' : undefined
-            return <line key={i} x1={x1} y1={y} x2={x1 + H_GAP - 4} y2={y} stroke={color} strokeWidth="1.5" markerEnd={marker} strokeDasharray={dash} />
+
+            if (r1 === r2) {
+              const goingRight = r1 % 2 === 0
+              const x1 = goingRight ? p1.x + NODE_W : p1.x
+              const x2 = goingRight ? p2.x - 4 : p2.x + NODE_W + 4
+              const y  = p1.y + NODE_H / 2
+              return <line key={i} x1={x1} y1={y} x2={x2} y2={y} stroke={color} strokeWidth="1.5" markerEnd={marker} strokeDasharray={dash} />
+            } else {
+              const x  = p1.x + NODE_W / 2
+              const y1 = p1.y + NODE_H
+              const y2 = p2.y - 4
+              return <line key={i} x1={x} y1={y1} x2={x} y2={y2} stroke={color} strokeWidth="1.5" markerEnd={marker} strokeDasharray={dash} />
+            }
           })}
 
-          {quarantineStep && steps.length > 1 && (
-            <path d={`M ${cx(1)} ${mainY + NODE_H} L ${cx(1)} ${qY + NODE_H / 2 - 4}`}
-              stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="5 3" fill="none" markerEnd="url(#arr-warn)" />
-          )}
+          {quarantineStep && steps.length > 1 && (() => {
+            const pSrc = getPos(1)
+            const pDst = { x: pSrc.x, y: 20 }
+            return (
+              <path d={`M ${pSrc.x + NODE_W / 2} ${pSrc.y - 4} L ${pDst.x + NODE_W / 2} ${pDst.y + NODE_H + 4}`}
+                stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="5 3" fill="none" markerEnd="url(#arr-warn)" />
+            )
+          })()}
         </svg>
 
         {steps.map((step, i) => {
           const rs = runState.stepStates[i] ?? 'idle'
+          const p = getPos(i)
           return (
             <div
               key={step.id}
               className={`absolute border rounded-xl flex flex-col gap-1.5 px-3 py-2.5 transition-all duration-300 cursor-pointer ${
-                selectedStepId === step.id ? 'ring-2 ring-indigo-500/70 ring-offset-1 ring-offset-chef-surface' : ''
+                selectedStepId === step.id ? 'ring-2 ring-indigo-500/70 ring-offset-1 ring-offset-chef-surface z-10' : ''
               } ${nodeStyle(step.status, rs)}`}
-              style={{ left: 20 + i * (NODE_W + H_GAP), top: mainY, width: NODE_W, height: NODE_H }}
+              style={{ left: p.x, top: p.y, width: NODE_W, height: NODE_H }}
               onClick={() => onSelectStep(step.id)}
             >
               <div className="flex items-center gap-2">
@@ -235,20 +264,26 @@ function PipelineDAG({ pipeline, runState, selectedStepId, onSelectStep }: {
           )
         })}
 
-        {quarantineStep && steps.length > 1 && (
-          <div className="absolute border rounded-xl flex flex-col gap-1.5 px-3 py-2.5 border-amber-500/40 bg-amber-500/5 text-amber-300"
-            style={{ left: 20 + (NODE_W + H_GAP), top: qY, width: NODE_W, height: NODE_H }}
-            onClick={() => onSelectStep(quarantineStep.id)}
-            role="button"
-            tabIndex={0}>
-            <div className="flex items-center gap-2">
-              <StepIcon op="quarantine" />
-              <span className="text-[11px] font-semibold">{quarantineStep.label}</span>
-              <AlertTriangle size={11} className="text-amber-400 ml-auto shrink-0" />
+        {quarantineStep && steps.length > 1 && (() => {
+          const pSrc = getPos(1)
+          const pDst = { x: pSrc.x, y: 20 }
+          return (
+            <div className={`absolute border rounded-xl flex flex-col gap-1.5 px-3 py-2.5 border-amber-500/40 bg-amber-500/5 text-amber-300 cursor-pointer ${
+              selectedStepId === quarantineStep.id ? 'ring-2 ring-indigo-500/70 ring-offset-1 ring-offset-chef-surface z-10' : ''
+            }`}
+              style={{ left: pDst.x, top: pDst.y, width: NODE_W, height: NODE_H }}
+              onClick={() => onSelectStep(quarantineStep.id)}
+              role="button"
+              tabIndex={0}>
+              <div className="flex items-center gap-2">
+                <StepIcon op="quarantine" />
+                <span className="text-[11px] font-semibold truncate">{quarantineStep.label}</span>
+                <AlertTriangle size={11} className="text-amber-400 ml-auto shrink-0" />
+              </div>
+              <div className="text-[9px] text-chef-muted leading-tight truncate">{quarantineStep.config}</div>
             </div>
-            <div className="text-[9px] text-chef-muted leading-tight truncate">{quarantineStep.config}</div>
-          </div>
-        )}
+          )
+        })()}
       </div>
     </div>
   )
@@ -284,6 +319,8 @@ export default function PipelinesPage() {
   const [selectedDagStepId, setSelectedDagStepId] = useState<string | null>(null)
   const [runState, setRunState]     = useState<RunState>(initRunState(0))
   const [showLog, setShowLog]       = useState(false)
+  const [isHelpOpen, setIsHelpOpen] = useState(true)
+  const [showLegend, setShowLegend] = useState(false)
   const logEndRef                   = useRef<HTMLDivElement>(null)
   const abortRef                    = useRef<AbortController | null>(null)
 
@@ -579,13 +616,22 @@ export default function PipelinesPage() {
                 <div className="font-mono text-sm font-semibold text-chef-text truncate">{p.name}</div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <StatusBadge status={p.status} />
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        router.push(`/pipelines/builder?id=${p.id}`)
+                      }
+                    }}
                     onClick={e => { e.stopPropagation(); router.push(`/pipelines/builder?id=${p.id}`) }}
                     className="p-1 text-chef-muted hover:text-indigo-400 hover:bg-indigo-500/10 rounded transition-colors"
                     title="Edit pipeline"
                   >
                     <Pencil size={11} />
-                  </button>
+                  </div>
                 </div>
               </div>
               <div className="text-[11px] text-chef-muted mt-1.5 leading-tight">{p.description}</div>
@@ -633,11 +679,6 @@ export default function PipelinesPage() {
                 )}
               </div>
               <div className="text-sm text-chef-muted mt-1">{selected.description}</div>
-              {selected.notes && (
-                <div className="mt-3 max-w-3xl whitespace-pre-wrap text-[11px] text-chef-muted leading-relaxed border border-chef-border rounded-xl bg-chef-card px-3 py-2.5">
-                  {selected.notes}
-                </div>
-              )}
               <div className="flex flex-wrap items-center gap-4 mt-2 text-[11px] text-chef-muted">
                 <span className="flex items-center gap-1.5"><Database size={11} />{selected.sourceType === 'connector' ? `Connector: ${selected.dataset}` : selected.dataset}</span>
                 <span className="flex items-center gap-1.5"><Clock size={11} />Last run {selected.lastRun}</span>
@@ -647,6 +688,17 @@ export default function PipelinesPage() {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setIsHelpOpen(!isHelpOpen)}
+                className={`p-1.5 rounded-lg transition-colors border ${
+                  isHelpOpen
+                    ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-400'
+                    : 'border-chef-border bg-chef-card text-chef-muted hover:text-chef-text'
+                }`}
+                title="Toggle details panel"
+              >
+                <ChevronRight size={14} className={`transition-transform ${isHelpOpen ? 'rotate-180' : ''}`} />
+              </button>
               <button
                 onClick={runPipeline}
                 disabled={runState.status === 'running'}
@@ -661,8 +713,9 @@ export default function PipelinesPage() {
                   : <><Play size={12} fill="currentColor" /> Run now</>}
               </button>
               <button
+                title="Close"
                 onClick={() => { setSelectedId(null); abortRef.current?.abort() }}
-                className="p-1.5 text-chef-muted hover:text-chef-text hover:bg-chef-card rounded-lg transition-colors"
+                className="p-1.5 text-chef-muted hover:text-chef-text hover:bg-chef-card rounded-lg transition-colors border border-transparent"
               >
                 <X size={14} />
               </button>
@@ -678,8 +731,9 @@ export default function PipelinesPage() {
             )}
           </div>
 
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-auto">
+          {/* Body Split */}
+          <div className="flex-1 flex min-h-0">
+            <div className="flex-1 overflow-auto">
 
             {/* DAG */}
             <div className="px-6 pt-5 pb-4">
@@ -703,22 +757,6 @@ export default function PipelinesPage() {
                   onSelectStep={setSelectedDagStepId}
                 />
               </div>
-              {selectedDagStep && (
-                <div className="mt-4 rounded-xl border border-chef-border bg-chef-card p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <StepIcon op={selectedDagStep.icon} size={12} />
-                    <div className="text-sm font-semibold text-chef-text">{selectedDagStep.label}</div>
-                    <div className="text-[10px] font-mono text-chef-muted">{selectedDagStep.op}</div>
-                  </div>
-                  <div className="text-[11px] text-chef-muted leading-relaxed mb-3">
-                    {stepPurpose(selectedDagStep.op)}
-                  </div>
-                  <div className="rounded-lg border border-chef-border bg-chef-bg px-3 py-2.5">
-                    <div className="text-[10px] uppercase tracking-widest text-chef-muted mb-1">Configuration</div>
-                    <div className="text-[11px] font-mono text-chef-text break-words">{selectedDagStep.config || 'No runtime summary available'}</div>
-                  </div>
-                </div>
-              )}
               <div className="mt-3 text-[11px] text-chef-muted">
                 Click a node to inspect what it does and how it is configured.
               </div>
@@ -761,39 +799,57 @@ export default function PipelinesPage() {
 
             {stepMetrics.length > 0 && (
               <div className="px-6 pb-4">
-                <div className="text-sm font-semibold text-chef-text mb-3">Step Runtime Graph</div>
-                <div className="rounded-xl border border-chef-border bg-chef-card overflow-hidden">
-                  <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_110px_110px] gap-3 px-4 py-2.5 border-b border-chef-border text-[10px] uppercase tracking-widest text-chef-muted">
-                    <div>Step</div>
-                    <div>Duration</div>
-                    <div>Volume</div>
-                    <div>Throughput</div>
-                    <div>Status</div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-semibold text-chef-text">Step Runtime Graph</div>
+                  <button 
+                    onClick={() => setShowLegend(!showLegend)}
+                    className="text-[10px] text-chef-muted hover:text-chef-text transition-colors"
+                  >
+                    {showLegend ? 'Hide Legend' : 'Show Legend'}
+                  </button>
+                </div>
+                
+                <div className="rounded-xl border border-chef-border bg-chef-card p-5">
+                  <div className="h-32 flex items-end gap-2 shrink-0">
+                    {stepMetrics.map((metric, i) => {
+                      const heightPct = Math.max(5, (metric.durationMs / maxStepDuration) * 100)
+                      const isSelected = selectedDagStepId === metric.stepId || (i === 0 && !selectedDagStepId)
+                      const color = metric.failed 
+                        ? 'bg-rose-500 hover:bg-rose-400' 
+                        : isSelected ? 'bg-indigo-500' : 'bg-emerald-500 hover:bg-emerald-400'
+                      
+                      return (
+                        <div 
+                          key={metric.stepIndex} 
+                          className="flex-1 flex flex-col justify-end group cursor-pointer h-full"
+                          onClick={() => setSelectedDagStepId(metric.stepId)}
+                          title={`${metric.label}\nDuration: ${fmtMs(metric.durationMs)}\nRows: ${metric.rowsIn} in -> ${metric.rowsOut} out`}
+                        >
+                          <div 
+                            className={`w-full rounded-t-sm transition-all duration-300 ${color} ${isSelected ? 'ring-2 ring-indigo-400 ring-offset-1 ring-offset-chef-card opacity-100' : 'opacity-80'}`} 
+                            style={{ height: `${heightPct}%` }}
+                          />
+                        </div>
+                      )
+                    })}
                   </div>
-                  {stepMetrics.map(metric => (
-                    <div key={metric.stepIndex} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_110px_110px] gap-3 px-4 py-3 border-b border-chef-border last:border-b-0 text-[11px]">
-                      <div className="min-w-0">
-                        <div className="text-chef-text font-semibold truncate">{metric.label}</div>
-                        <div className="text-chef-muted font-mono truncate">{metric.op}</div>
+                  
+                  <div className="flex gap-2 mt-2">
+                    {stepMetrics.map((metric) => (
+                      <div key={`lbl-${metric.stepIndex}`} className="flex-1 text-center text-[9px] font-mono text-chef-muted truncate mt-1">
+                        {metric.stepIndex + 1}
                       </div>
-                      <div>
-                        <div className="h-2 rounded-full bg-chef-bg overflow-hidden">
-                          <div className={`h-full ${metric.failed ? 'bg-rose-400' : 'bg-indigo-400'}`} style={{ width: `${Math.max(8, (metric.durationMs / maxStepDuration) * 100)}%` }} />
-                        </div>
-                        <div className="mt-1 text-chef-muted font-mono">{fmtMs(metric.durationMs)}</div>
-                      </div>
-                      <div>
-                        <div className="h-2 rounded-full bg-chef-bg overflow-hidden">
-                          <div className={`${metric.failed ? 'bg-rose-400' : 'bg-emerald-400'} h-full`} style={{ width: `${Math.max(8, (Math.max(metric.rowsIn, metric.rowsOut) / maxStepVolume) * 100)}%` }} />
-                        </div>
-                        <div className="mt-1 text-chef-muted font-mono">{metric.rowsIn} in / {metric.rowsOut} out</div>
-                      </div>
-                      <div className="text-chef-muted font-mono">{metric.throughputPerSec}/s</div>
-                      <div className={`font-mono ${metric.failed ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {metric.failed ? 'failed' : 'ok'}
-                      </div>
+                    ))}
+                  </div>
+
+                  {showLegend && (
+                    <div className="mt-4 pt-3 border-t border-chef-border flex gap-4 text-[10px] text-chef-muted justify-center animate-slide-in">
+                      <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500 opacity-80" /> Success</div>
+                      <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-rose-500 opacity-80" /> Failed</div>
+                      <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-indigo-500" /> Selected</div>
+                      <div className="flex items-center gap-1.5 ml-4 italic">Bar height indicates relative duration</div>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             )}
@@ -939,6 +995,54 @@ export default function PipelinesPage() {
                 </div>
               </div>
             )}
+            </div>
+
+            {/* Right Panel */}
+            {isHelpOpen && (
+              <div className="w-80 shrink-0 border-l border-chef-border bg-chef-bg overflow-auto p-5 animate-slide-in">
+                {selected.notes && (
+                  <div className="mb-8">
+                    <div className="text-sm font-semibold text-chef-text mb-2">Pipeline Notes</div>
+                    <div className="text-[11px] text-chef-muted leading-relaxed whitespace-pre-wrap">
+                      {selected.notes}
+                    </div>
+                    {selectedDagStep && <div className="mt-8 border-t border-chef-border" />}
+                  </div>
+                )}
+
+                {selectedDagStep ? (
+                  <>
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <StepIcon op={selectedDagStep.icon} size={14} />
+                        <div className="text-base font-semibold text-chef-text">{selectedDagStep.label}</div>
+                      </div>
+                      <div className="text-[10px] font-mono text-chef-muted uppercase tracking-widest">{selectedDagStep.op}</div>
+                    </div>
+
+                    <div className="text-[13px] text-chef-text leading-relaxed mb-6">
+                      {stepPurpose(selectedDagStep.op)}
+                    </div>
+
+                    <div className="mb-6">
+                      <div className="text-[10px] uppercase tracking-widest font-semibold text-chef-muted mb-2">Configuration</div>
+                      <div className="rounded-lg border border-chef-border bg-chef-card px-3 py-2.5">
+                        <div className="text-[11px] font-mono text-chef-text break-words whitespace-pre-wrap">{selectedDagStep.config || 'No runtime summary available'}</div>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-chef-muted italic">
+                      Tip: Use the graph to check performance and data volumes per step.
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[11px] text-chef-muted italic">
+                    Select a node in the DAG to view its configuration and runtime details.
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         </div>
       )}

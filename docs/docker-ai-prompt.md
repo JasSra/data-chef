@@ -15,6 +15,8 @@ Here are the requirements:
 1. **Docker Image**: The image is published to our Docker Hub registry at `jassra/datachef:latest`.
 2. **Ports**: The container runs on port 3000 natively. Map it to port 80 or 8080 on the host, depending on what's standard for a web facing app.
 3. **Shared Resources Context**: This application processes data and uses external services. Critically, we do NOT want this container to spin up its own Redis or DB. It must use our globally shared Redis cluster and API layers.
+   - The application includes background workers that auto-start on boot for connector syncs and network discovery.
+   - A health check endpoint at `/api/health` verifies the server and workers are running.
 4. **Environment Variables Needed**:
    - `NODE_ENV=production`
    - `REDIS_HOST=` (needs to point to our shared Redis, e.g. `redis.shared.threadcode.internal`)

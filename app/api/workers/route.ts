@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server'
 import { getWorkerState } from '@/lib/pipelines'
-import { ensureConnectorSchedulerStarted } from '@/lib/connector-sync'
-import { ensureNetworkDiscoverySchedulerStarted } from '@/lib/network-discovery'
+import { bootstrapWorkers } from '@/lib/bootstrap'
 
 export const dynamic = 'force-dynamic'
 
 export function GET() {
-  ensureConnectorSchedulerStarted()
-  ensureNetworkDiscoverySchedulerStarted()
+  bootstrapWorkers()
   return NextResponse.json(getWorkerState())
 }
