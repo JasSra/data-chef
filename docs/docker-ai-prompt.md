@@ -9,10 +9,10 @@ Here is a prompt you can feed into an AI assistant (like ChatGPT, GitHub Copilot
 ```text
 Act as a DevOps Engineer.
 
-I need a deployment configuration (either a `docker run` command, a `docker-compose.yml`, or a Kubernetes `Deployment.yaml`) to run a Next.js standalone application called "data-chef" for my company, Thread Code IO.
+I need a deployment configuration (either a `docker run` command, a `docker-compose.yml`, or a Kubernetes `Deployment.yaml`) to run a Next.js standalone application called "data-chef".
 
 Here are the requirements:
-1. **Docker Image**: The image is published to our Docker Hub registry at `threadcodeio/data-chef:latest`.
+1. **Docker Image**: The image is published to our Docker Hub registry at `jassra/datachef:latest`.
 2. **Ports**: The container runs on port 3000 natively. Map it to port 80 or 8080 on the host, depending on what's standard for a web facing app.
 3. **Shared Resources Context**: This application processes data and uses external services. Critically, we do NOT want this container to spin up its own Redis or DB. It must use our globally shared Redis cluster and API layers.
 4. **Environment Variables Needed**:
