@@ -6,7 +6,10 @@ const createNextConfig = (phase) => ({
   // does not invalidate the chunk/manifest set used by a live `next dev`.
   distDir: phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next',
   output: process.env.NEXT_OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
+  
+  // Enable OpenTelemetry instrumentation
   experimental: {
+    instrumentationHook: true,
     serverComponentsExternalPackages: [
       '@aws-sdk/client-s3',
       '@google-cloud/bigquery',

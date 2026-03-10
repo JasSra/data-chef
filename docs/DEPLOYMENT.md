@@ -105,6 +105,14 @@ CONNECTOR_SECRET_KEY=<your-generated-key-from-above>
 # REDIS_PORT=6379
 # REDIS_PASSWORD=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # REDIS_TLS=true
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# OPTIONAL: OpenTelemetry (OTEL) Distributed Tracing & Metrics
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# OTEL_ENABLED=true
+# OTEL_SERVICE_NAME=data-chef
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+# OTEL_EXPORTER_OTLP_HEADERS=x-api-key=your-observability-api-key
 ```
 
 ---
