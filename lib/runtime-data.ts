@@ -18,6 +18,9 @@ import { fetchAzureDevOpsRows } from '@/lib/azure-devops'
 import { fetchGitHubRows } from '@/lib/github'
 import { isObservabilityConnectorType, sampleObservabilityRows } from '@/lib/observability'
 import { sampleRedisRowsFromConfig } from '@/lib/redis'
+import { sampleMssqlRowsFromConfig, executeMssqlQuery } from '@/lib/mssql'
+import { browseRabbitQueue } from '@/lib/rabbitmq'
+import { subscribeMqttTopic } from '@/lib/mqtt'
 import type { SourceReference, SourceType } from '@/lib/datasets'
 
 export type RuntimeRow = Record<string, unknown>
@@ -45,7 +48,7 @@ export interface RuntimeTableQueryResult extends RuntimeQueryResult {
 }
 
 type SupportedRuntimeConnector =
-  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'redis' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
+  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'redis' | 'mssql' | 'rabbitmq' | 'mqtt' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
 
 export function inferType(value: unknown): string {
   if (value === null || value === undefined) return 'null'
@@ -302,6 +305,17 @@ export async function sampleRowsFromRuntimeConfig(
       return sampleBigQueryRowsFromConfig(config, options.resource, rowLimit)
     case 'redis':
       return sampleRedisRowsFromConfig(config, options.resource, rowLimit)
+    case 'mssql':
+      return sampleMssqlRowsFromConfig(config, options.resource, rowLimit) as Promise<RuntimeRow[]>
+    case 'rabbitmq': {
+      const queue = options.resource?.trim() || String(config.defaultCatalog ?? 'default')
+      const res = await browseRabbitQueue(config, { queue, count: rowLimit })
+      return res.rows.map(row => Object.fromEntries(res.columns.map((col, i) => [col, row[i]])))
+    }
+    case 'mqtt': {
+      const res = await subscribeMqttTopic(config, { topic: options.resource || String(config.defaultTopic ?? '#'), limit: rowLimit })
+      return res.rows.map(row => Object.fromEntries(res.columns.map((col, i) => [col, row[i]])))
+    }
     case 'appinsights': {
       const connectorId = String(config.connectorId ?? '')
       if (!connectorId) throw new Error('App Insights connectorId is required')
@@ -413,6 +427,21 @@ export async function loadRowsFromConnector(
 
   if (connector.type === 'redis') {
     return sampleRowsFromRuntimeConfig('redis', config, options)
+  }
+
+  if (connector.type === 'mssql') {
+    return sampleMssqlRowsFromConfig(config, options.resource, options.rowLimit ?? 500) as Promise<RuntimeRow[]>
+  }
+
+  if (connector.type === 'rabbitmq') {
+    const queue = options.resource?.trim() || String(config.defaultCatalog ?? 'default')
+    const res = await browseRabbitQueue(config, { queue, count: options.rowLimit ?? 50 })
+    return res.rows.map(row => Object.fromEntries(res.columns.map((col, i) => [col, row[i]])))
+  }
+
+  if (connector.type === 'mqtt') {
+    const res = await subscribeMqttTopic(config, { topic: options.resource || String(config.defaultTopic ?? '#'), limit: options.rowLimit ?? 100 })
+    return res.rows.map(row => Object.fromEntries(res.columns.map((col, i) => [col, row[i]])))
   }
 
   if (connector.type === 'azureentraid') {
@@ -691,10 +720,49 @@ export async function executeSourceQuery(
 
   const connector = getConnector(source.sourceId)
   if (!connector) throw new Error(`Unknown connector: "${source.sourceId}"`)
-  if (connector.type !== 'postgresql') return null
+  if (connector.type !== 'postgresql' && connector.type !== 'mysql' && connector.type !== 'mssql') return null
 
   const config = getConnectorRuntimeConfig(source.sourceId)
   if (!config) throw new Error(`Connector "${connector.name}" has no runtime config`)
+
+  if (connector.type === 'mssql') {
+    const result = await executeMssqlQuery(config, { query: sql, rowLimit: 500 })
+    const rows = result.rows.map((row: string[]) => result.columns.map((_col: string, i: number) => row[i]))
+    return {
+      columns: result.columns,
+      rows,
+      rowCount: result.rowCount,
+      totalRows: result.totalRows,
+      pushedDown: true,
+    }
+  }
+
+  if (connector.type === 'mysql') {
+    const mysql = await import('mysql2/promise')
+    const connection = Boolean(config.connectionMode === 'connectionString')
+      ? await mysql.createConnection(String(config.connectionString ?? ''))
+      : await mysql.createConnection({
+          host: String(config.host ?? ''),
+          port: Number(config.port ?? 3306),
+          database: String(config.database ?? ''),
+          user: String(config.dbUser ?? ''),
+          password: String(config.dbPass ?? ''),
+        })
+    try {
+      const [rows] = await connection.query(sql)
+      const arr = rows as Array<Record<string, unknown>>
+      const columns = arr.length > 0 ? Object.keys(arr[0]) : []
+      return {
+        columns,
+        rows: arr.map(row => columns.map(col => String(row[col] ?? ''))),
+        rowCount: arr.length,
+        totalRows: arr.length,
+        pushedDown: true,
+      }
+    } finally {
+      await connection.end()
+    }
+  }
 
   const client = await getPgClient(config)
   try {

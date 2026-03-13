@@ -240,21 +240,27 @@ const DATASET_STORE_FILE = 'datasets.json'
 
 interface DatasetStateFile {
   datasets: DatasetRecord[]
+  deletedIds?: string[]
 }
 
 function seedState(): DatasetStateFile {
-  return { datasets: [...SEED] }
+  return { datasets: [], deletedIds: [] }
 }
 
 function readState(): DatasetStateFile {
   const state = readJsonFile<DatasetStateFile>(DATASET_STORE_FILE, seedState())
+  const deletedIds = new Set(state.deletedIds ?? [])
   const merged = new Map<string, DatasetRecord>()
-  for (const dataset of SEED) merged.set(dataset.id, normalizeDatasetRecord({
-    ...dataset,
-    schema: dataset.schema ? dataset.schema.map(field => ({ ...field })) : null,
-    sampleRows: dataset.sampleRows ? dataset.sampleRows.map(row => ({ ...row })) : null,
-  }))
+  for (const dataset of SEED) {
+    if (deletedIds.has(dataset.id)) continue
+    merged.set(dataset.id, normalizeDatasetRecord({
+      ...dataset,
+      schema: dataset.schema ? dataset.schema.map(field => ({ ...field })) : null,
+      sampleRows: dataset.sampleRows ? dataset.sampleRows.map(row => ({ ...row })) : null,
+    }))
+  }
   for (const dataset of state.datasets) {
+    if (deletedIds.has(dataset.id)) continue
     merged.set(dataset.id, normalizeDatasetRecord({
       ...dataset,
       schema: dataset.schema ? dataset.schema.map(field => ({ ...field })) : null,
@@ -263,6 +269,7 @@ function readState(): DatasetStateFile {
   }
   return {
     datasets: Array.from(merged.values()),
+    deletedIds: [...deletedIds],
   }
 }
 
@@ -292,7 +299,19 @@ export function addDataset(data: Omit<DatasetRecord, 'id' | 'createdAt'>): Datas
 }
 
 export function clearDatasets(): void {
-  writeState({ datasets: [] })
+  writeState({ datasets: [], deletedIds: SEED.map(dataset => dataset.id) })
+}
+
+export function deleteDataset(id: string): DatasetRecord | null {
+  const state = readState()
+  const index = state.datasets.findIndex(dataset => dataset.id === id)
+  if (index === -1) return null
+  const [deleted] = state.datasets.splice(index, 1)
+  if (SEED.some(dataset => dataset.id === id)) {
+    state.deletedIds = Array.from(new Set([...(state.deletedIds ?? []), id]))
+  }
+  writeState(state)
+  return deleted
 }
 
 export function getDatasetByUrl(url: string): DatasetRecord | null {

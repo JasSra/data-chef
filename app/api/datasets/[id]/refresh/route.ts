@@ -6,6 +6,8 @@ import { inferSchema, loadRowsFromConnector } from '@/lib/runtime-data'
 
 export const dynamic = 'force-dynamic'
 
+const PREVIEW_SAMPLE_LIMIT = 100
+
 function extractArray(data: unknown): unknown[] {
   if (Array.isArray(data)) return data
   if (data && typeof data === 'object') {
@@ -46,7 +48,7 @@ async function refreshHttpDataset(url: string) {
   const records = extractArray(data) as Record<string, unknown>[]
   return {
     schema: inferSchema(records),
-    sampleRows: records.slice(0, 5),
+    sampleRows: records.slice(0, PREVIEW_SAMPLE_LIMIT),
     totalRows: records.length,
   }
 }
@@ -70,7 +72,7 @@ export async function POST(
           resource: ds.resource,
         })
         const schema = inferSchema(rows)
-        const sampleRows = rows.slice(0, 5)
+        const sampleRows = rows.slice(0, PREVIEW_SAMPLE_LIMIT)
         updateDatasetSchema(id, schema, sampleRows, rows.length)
         return NextResponse.json({
           schema,

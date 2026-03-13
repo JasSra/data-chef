@@ -14,6 +14,7 @@ import {
   Info,
   ExternalLink,
   Compass,
+  LayoutGrid,
   type LucideIcon,
 } from 'lucide-react'
 import { useAppSettings } from '@/components/SettingsProvider'
@@ -37,8 +38,9 @@ const navGroups: NavGroup[] = [
   {
     heading: 'Integrate',
     items: [
-      { href: '/api-explorer', icon: Compass,  label: 'API Explorer', brandClass: 'fa-solid fa-plug-circle-bolt', countKey: 'apiServices' },
-      { href: '/pipelines',    icon: GitBranch, label: 'Pipelines' },
+      { href: '/api-explorer', icon: Compass,     label: 'API Explorer', brandClass: 'fa-solid fa-plug-circle-bolt', countKey: 'apiServices' },
+      { href: '/studio',       icon: LayoutGrid, label: 'Studio' },
+      { href: '/pipelines',    icon: GitBranch,  label: 'Pipelines' },
     ],
   },
   {
