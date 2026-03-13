@@ -740,6 +740,22 @@ export function updateConnectorDatasets(id: string, datasets: string[]): void {
   writeState(state)
 }
 
+export function deleteConnector(id: string): ConnectorRecord | null {
+  const state = readState()
+  const index = state.connectors.findIndex(connector => connector.id === id)
+  if (index === -1) return null
+  const [deleted] = state.connectors.splice(index, 1)
+  delete state.runtimeConfigById[id]
+  delete state.aiCredsById[id]
+  delete state.observabilityCredsById[id]
+  delete state.azureB2cCredsById[id]
+  delete state.azureEntraIdCredsById[id]
+  delete state.githubCredsById[id]
+  delete state.azureDevOpsCredsById[id]
+  writeState(state)
+  return deleted
+}
+
 export function clearConnectors(): void {
   writeState(seedState())
 }

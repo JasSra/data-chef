@@ -10,7 +10,7 @@ import {
 import BrandIcon from '@/components/BrandIcon'
 
 /* ── Connector catalog ───────────────────────────────────────────── */
-export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
+export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 'mssql' | 'rabbitmq' | 'mqtt' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
 
 interface ConnectorDef {
   id: ConnectorId; label: string; desc: string; Icon?: React.ElementType
@@ -28,6 +28,9 @@ const CONNECTORS: ConnectorDef[] = [
   { id: 'mysql',      label: 'MySQL / MariaDB',  desc: 'Tables or custom SQL queries',          Icon: Database,      color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/30',  category: 'Database' },
   { id: 'mongodb',    label: 'MongoDB',          desc: 'Collections, pipelines & aggregations', Icon: Database,      color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', category: 'Database', badge: 'NoSQL' },
   { id: 'redis',      label: 'Redis',            desc: 'Keys, hashes, streams, RediSearch, RedisJSON', Icon: Database, color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30', category: 'Database', badge: 'Cache' },
+  { id: 'mssql',     label: 'SQL Server / Azure SQL', desc: 'Tables, views, stored procedures, full SQL browser', Icon: Database, color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/30', category: 'Database', badge: 'Microsoft' },
+  { id: 'rabbitmq',  label: 'RabbitMQ',         desc: 'Browse queues, exchanges, and messages via management API', Icon: Zap, color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'Database', badge: 'Queue' },
+  { id: 'mqtt',      label: 'MQTT',             desc: 'Subscribe to topics, browse retained messages', Icon: Zap, color: 'text-emerald-300', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', category: 'Database', badge: 'IoT' },
   { id: 's3',         label: 'S3 / R2 / GCS',   desc: 'Object storage, JSON/CSV/Parquet',      Icon: Cloud,         color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/30',  category: 'Storage' },
   { id: 'sftp',       label: 'SFTP / FTP',       desc: 'Secure file transfer, remote exports',  Icon: Server,        color: 'text-slate-400',   bg: 'bg-slate-500/10',   border: 'border-slate-500/30',   category: 'Storage' },
   { id: 'bigquery',   label: 'BigQuery',         desc: 'Google BigQuery tables and SQL',        brandClass: 'fa-brands fa-google', color: 'text-rose-400',    bg: 'bg-rose-500/10',    border: 'border-rose-500/30',    category: 'Warehouse', badge: 'GCP' },
@@ -168,6 +171,39 @@ interface RedisForm {
   defaultValueType: 'auto' | 'string' | 'hash' | 'list' | 'set' | 'zset' | 'json' | 'timeseries' | 'stream' | 'search'
   defaultKeyPattern: string
   defaultSearchIndex: string
+  schedule: string
+}
+interface MssqlForm {
+  name: string; description: string
+  connectionMode: 'fields' | 'connectionString'
+  connectionString: string
+  host: string; port: string
+  database: string; dbUser: string; dbPass: string
+  instanceName: string
+  encrypt: boolean; trustServerCertificate: boolean
+  schema: string
+  defaultCatalog: 'tables' | 'views' | 'columns' | 'procedures' | 'indexes' | 'databases'
+  schedule: string
+}
+interface RabbitMQForm {
+  name: string; description: string
+  connectionMode: 'fields' | 'connectionString'
+  connectionString: string
+  host: string; port: string; managementPort: string
+  vhost: string; username: string; password: string
+  tls: boolean; managementTls: boolean
+  defaultCatalog: 'queues' | 'exchanges' | 'bindings' | 'vhosts' | 'connections' | 'overview'
+  schedule: string
+}
+interface MqttForm {
+  name: string; description: string
+  connectionMode: 'fields' | 'connectionString'
+  connectionString: string
+  host: string; port: string
+  username: string; password: string
+  tls: boolean
+  protocol: 'mqtt' | 'mqtts' | 'ws' | 'wss'
+  defaultTopic: string
   schedule: string
 }
 interface FileForm {
@@ -312,7 +348,7 @@ interface AzureDevOpsForm {
   pipelineRunDays: string
   schedule: string
 }
-type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | RedisForm | FileForm | AppInsightsForm | AzureMonitorForm | ElasticObservabilityForm | DatadogForm | AzureB2CForm | AzureEntraIdForm | GitHubForm | AzureDevOpsForm
+type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | RedisForm | MssqlForm | RabbitMQForm | MqttForm | FileForm | AppInsightsForm | AzureMonitorForm | ElasticObservabilityForm | DatadogForm | AzureB2CForm | AzureEntraIdForm | GitHubForm | AzureDevOpsForm
 
 /* ── Validation ──────────────────────────────────────────────────── */
 type FieldErrors = Record<string, string | undefined>
@@ -400,6 +436,42 @@ function validateRedis(f: RedisForm): FieldErrors {
     if (!f.port || isNaN(Number(f.port))) e.port = 'Valid port required'
   }
   if (f.defaultQueryMode === 'search' && !f.defaultSearchIndex.trim()) e.defaultSearchIndex = 'Search index is required for search mode'
+  return e
+}
+function validateMssql(f: MssqlForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (f.connectionMode === 'connectionString') {
+    if (!f.connectionString.trim()) e.connectionString = 'Connection string required'
+  } else {
+    if (!f.host.trim()) e.host = 'Host is required'
+    if (!f.port || isNaN(Number(f.port))) e.port = 'Valid port required'
+    if (!f.dbUser.trim()) e.dbUser = 'Username required'
+    if (!f.dbPass.trim()) e.dbPass = 'Password required'
+  }
+  return e
+}
+function validateRabbitMQ(f: RabbitMQForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (f.connectionMode === 'connectionString') {
+    if (!f.connectionString.trim()) e.connectionString = 'Connection string required'
+  } else {
+    if (!f.host.trim()) e.host = 'Host is required'
+    if (!f.port || isNaN(Number(f.port))) e.port = 'Valid AMQP port required'
+    if (!f.managementPort || isNaN(Number(f.managementPort))) e.managementPort = 'Valid management port required'
+  }
+  return e
+}
+function validateMqtt(f: MqttForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (f.connectionMode === 'connectionString') {
+    if (!f.connectionString.trim()) e.connectionString = 'Connection string required'
+  } else {
+    if (!f.host.trim()) e.host = 'Host is required'
+    if (!f.port || isNaN(Number(f.port))) e.port = 'Valid port required'
+  }
   return e
 }
 function validateFile(f: FileForm): FieldErrors {
@@ -652,6 +724,45 @@ function getTestLogs(type: ConnectorId, form: Record<string, unknown>): LogEntry
         { level: 'info', msg: 'POST /api/v2/logs/events/search', delay: 480 },
         { level: 'success', msg: 'Datadog API responded · observability query runtime ready', delay: 420 },
       ]
+    case 'mssql': {
+      const host = String(form.host || 'sqlserver.example.com')
+      const db = String(form.database || 'master')
+      const hasEncrypt = Boolean(form.encrypt)
+      return [
+        { level: 'info',    msg: `Resolving ${host}:${String(form.port || '1433')}`,       delay: 400 },
+        { level: 'info',    msg: 'TCP connection established',                               delay: 600 },
+        { level: hasEncrypt ? 'info' : 'warn', msg: hasEncrypt ? 'TLS encryption enabled' : 'Encryption disabled — use encrypt=true in production', delay: 500 },
+        { level: 'info',    msg: `Authenticating as '${String(form.dbUser || 'sa')}'`,     delay: 400 },
+        { level: 'info',    msg: `Connected to database '${db}'`,                           delay: 300 },
+        { level: 'info',    msg: `SELECT TOP 1 @@VERSION — SQL Server version detected`,   delay: 600 },
+        { level: 'info',    msg: `Listing INFORMATION_SCHEMA.TABLES WHERE schema = '${String(form.schema || 'dbo')}'`, delay: 500 },
+        { level: 'success', msg: 'SQL Server reachable · full schema browser ready',        delay: 500 },
+      ]
+    }
+    case 'rabbitmq': {
+      const host = String(form.host || 'rabbitmq.example.com')
+      const mgmtPort = String(form.managementPort || '15672')
+      return [
+        { level: 'info',    msg: `Resolving ${host}:${mgmtPort} (management API)`,         delay: 400 },
+        { level: 'info',    msg: 'GET /api/overview · authenticating',                      delay: 600 },
+        { level: 'info',    msg: `vhost: ${String(form.vhost || '/')}`,                    delay: 300 },
+        { level: 'info',    msg: 'Fetching queue list · exchange catalog',                  delay: 500 },
+        { level: 'info',    msg: '8 queues · 3 exchanges discovered',                      delay: 400 },
+        { level: 'success', msg: 'RabbitMQ management API reachable · queue browser ready', delay: 500 },
+      ]
+    }
+    case 'mqtt': {
+      const host = String(form.host || 'mqtt.example.com')
+      const port = String(form.port || '1883')
+      return [
+        { level: 'info',    msg: `Resolving ${host}:${port}`,                              delay: 400 },
+        { level: 'info',    msg: `CONNECT packet sent (clientId: datachef-probe)`,         delay: 600 },
+        { level: 'info',    msg: 'CONNACK received — connection accepted',                  delay: 500 },
+        { level: 'info',    msg: `SUBSCRIBE ${String(form.defaultTopic || '#')} QoS 1`,   delay: 400 },
+        { level: 'info',    msg: 'Sampling messages (5s window)…',                         delay: 600 },
+        { level: 'success', msg: 'MQTT broker reachable · topic browser ready',            delay: 500 },
+      ]
+    }
     default:
       return []
   }
@@ -696,6 +807,22 @@ const INIT_REDIS: RedisForm = {
   name: '', description: '', connectionMode: 'fields', connectionString: '',
   host: '', port: '6379', username: '', password: '', database: '0', tls: false,
   defaultQueryMode: 'command', defaultValueType: 'auto', defaultKeyPattern: '*', defaultSearchIndex: '', schedule: 'on-demand',
+}
+const INIT_MSSQL: MssqlForm = {
+  name: '', description: '', connectionMode: 'fields', connectionString: '',
+  host: '', port: '1433', database: 'master', dbUser: 'sa', dbPass: '',
+  instanceName: '', encrypt: true, trustServerCertificate: false, schema: 'dbo',
+  defaultCatalog: 'tables', schedule: 'on-demand',
+}
+const INIT_RABBIT: RabbitMQForm = {
+  name: '', description: '', connectionMode: 'fields', connectionString: '',
+  host: '', port: '5672', managementPort: '15672', vhost: '/', username: 'guest', password: 'guest',
+  tls: false, managementTls: false, defaultCatalog: 'queues', schedule: 'on-demand',
+}
+const INIT_MQTT: MqttForm = {
+  name: '', description: '', connectionMode: 'fields', connectionString: '',
+  host: '', port: '1883', username: '', password: '', tls: false, protocol: 'mqtt',
+  defaultTopic: '#', schedule: 'on-demand',
 }
 const INIT_AI: AppInsightsForm = {
   name: '', description: '', authMode: 'api_key', mode: 'workspace', connectionString: '', appId: '', apiKey: '', workspaceId: '', tenantId: '', clientId: '', clientSecret: '',
@@ -1329,6 +1456,197 @@ function parseCSV(text: string): Record<string, unknown>[] {
     headers.forEach((h, i) => { obj[h] = vals[i] ?? '' })
     return obj
   })
+}
+
+/* ── MSSQL Configure step ────────────────────────────────────────── */
+function MssqlConfigure({ form, set, errors }: { form: MssqlForm; set: (f: MssqlForm) => void; errors: FieldErrors }) {
+  const f = <K extends keyof MssqlForm>(k: K, v: MssqlForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => f('name', v)} placeholder="e.g. Production SQL Server" error={errors.name} />
+      </FieldRow>
+      <Toggle value={form.connectionMode === 'connectionString'} onChange={v => f('connectionMode', v ? 'connectionString' : 'fields')} label="Use connection string" />
+      {form.connectionMode === 'connectionString' ? (
+        <FieldRow label="Connection String" error={errors.connectionString}>
+          <FInput value={form.connectionString} onChange={v => f('connectionString', v)} placeholder="Server=host,1433;Database=mydb;User Id=sa;Password=..." error={errors.connectionString} />
+        </FieldRow>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <FieldRow label="Host / Server" error={errors.host}>
+                <FInput value={form.host} onChange={v => f('host', v)} placeholder="sqlserver.example.com" error={errors.host} />
+              </FieldRow>
+            </div>
+            <FieldRow label="Port" error={errors.port}>
+              <FInput value={form.port || '1433'} onChange={v => f('port', v)} placeholder="1433" error={errors.port} />
+            </FieldRow>
+          </div>
+          <FieldRow label="Instance Name (optional)">
+            <FInput value={form.instanceName} onChange={v => f('instanceName', v)} placeholder="SQLEXPRESS" />
+          </FieldRow>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Database" error={errors.database}>
+              <FInput value={form.database} onChange={v => f('database', v)} placeholder="master" error={errors.database} />
+            </FieldRow>
+            <FieldRow label="Schema">
+              <FInput value={form.schema} onChange={v => f('schema', v)} placeholder="dbo" />
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Username" error={errors.dbUser}>
+              <FInput value={form.dbUser} onChange={v => f('dbUser', v)} placeholder="sa" error={errors.dbUser} />
+            </FieldRow>
+            <FieldRow label="Password" error={errors.dbPass}>
+              <FInput type="password" value={form.dbPass} onChange={v => f('dbPass', v)} placeholder="••••••••" error={errors.dbPass} />
+            </FieldRow>
+          </div>
+          <div className="space-y-2">
+            <Toggle value={form.encrypt} onChange={v => f('encrypt', v)} label="Encrypt connection (recommended)" />
+            <Toggle value={form.trustServerCertificate} onChange={v => f('trustServerCertificate', v)} label="Trust server certificate (dev/self-signed)" />
+          </div>
+        </>
+      )}
+      <Divider label="Default Browser View" />
+      <FieldRow label="Default Catalog">
+        <FSelect value={form.defaultCatalog} onChange={v => f('defaultCatalog', v as MssqlForm['defaultCatalog'])}>
+          <option value="tables">Tables</option>
+          <option value="views">Views</option>
+          <option value="columns">Columns</option>
+          <option value="procedures">Stored Procedures</option>
+          <option value="indexes">Indexes</option>
+          <option value="databases">Databases</option>
+        </FSelect>
+      </FieldRow>
+      <Divider label="Schedule" />
+      <FieldRow label="Sync Interval"><ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} /></FieldRow>
+    </div>
+  )
+}
+
+/* ── RabbitMQ Configure step ─────────────────────────────────────── */
+function RabbitMQConfigure({ form, set, errors }: { form: RabbitMQForm; set: (f: RabbitMQForm) => void; errors: FieldErrors }) {
+  const f = <K extends keyof RabbitMQForm>(k: K, v: RabbitMQForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => f('name', v)} placeholder="e.g. Production RabbitMQ" error={errors.name} />
+      </FieldRow>
+      <Toggle value={form.connectionMode === 'connectionString'} onChange={v => f('connectionMode', v ? 'connectionString' : 'fields')} label="Use AMQP connection string" />
+      {form.connectionMode === 'connectionString' ? (
+        <FieldRow label="AMQP URL" error={errors.connectionString}>
+          <FInput value={form.connectionString} onChange={v => f('connectionString', v)} placeholder="amqp://user:pass@host:5672/vhost" error={errors.connectionString} />
+        </FieldRow>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <FieldRow label="Host" error={errors.host}>
+                <FInput value={form.host} onChange={v => f('host', v)} placeholder="rabbitmq.example.com" error={errors.host} />
+              </FieldRow>
+            </div>
+            <FieldRow label="AMQP Port" error={errors.port}>
+              <FInput value={form.port || '5672'} onChange={v => f('port', v)} placeholder="5672" error={errors.port} />
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <FieldRow label="Virtual Host">
+                <FInput value={form.vhost} onChange={v => f('vhost', v)} placeholder="/" />
+              </FieldRow>
+            </div>
+            <FieldRow label="Mgmt Port" error={errors.managementPort}>
+              <FInput value={form.managementPort || '15672'} onChange={v => f('managementPort', v)} placeholder="15672" error={errors.managementPort} />
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Username">
+              <FInput value={form.username} onChange={v => f('username', v)} placeholder="guest" />
+            </FieldRow>
+            <FieldRow label="Password">
+              <FInput type="password" value={form.password} onChange={v => f('password', v)} placeholder="••••••••" />
+            </FieldRow>
+          </div>
+          <div className="space-y-2">
+            <Toggle value={form.tls} onChange={v => f('tls', v)} label="AMQP TLS (amqps://)" />
+            <Toggle value={form.managementTls} onChange={v => f('managementTls', v)} label="Management API HTTPS" />
+          </div>
+        </>
+      )}
+      <Divider label="Default Browser View" />
+      <FieldRow label="Default Catalog">
+        <FSelect value={form.defaultCatalog} onChange={v => f('defaultCatalog', v as RabbitMQForm['defaultCatalog'])}>
+          <option value="queues">Queues</option>
+          <option value="exchanges">Exchanges</option>
+          <option value="bindings">Bindings</option>
+          <option value="vhosts">Virtual Hosts</option>
+          <option value="connections">Connections</option>
+          <option value="overview">Overview</option>
+        </FSelect>
+      </FieldRow>
+      <Divider label="Schedule" />
+      <FieldRow label="Sync Interval"><ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} /></FieldRow>
+    </div>
+  )
+}
+
+/* ── MQTT Configure step ─────────────────────────────────────────── */
+function MqttConfigure({ form, set, errors }: { form: MqttForm; set: (f: MqttForm) => void; errors: FieldErrors }) {
+  const f = <K extends keyof MqttForm>(k: K, v: MqttForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => f('name', v)} placeholder="e.g. IoT MQTT Broker" error={errors.name} />
+      </FieldRow>
+      <Toggle value={form.connectionMode === 'connectionString'} onChange={v => f('connectionMode', v ? 'connectionString' : 'fields')} label="Use connection string" />
+      {form.connectionMode === 'connectionString' ? (
+        <FieldRow label="MQTT URL" error={errors.connectionString}>
+          <FInput value={form.connectionString} onChange={v => f('connectionString', v)} placeholder="mqtt://user:pass@host:1883" error={errors.connectionString} />
+        </FieldRow>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <FieldRow label="Broker Host" error={errors.host}>
+                <FInput value={form.host} onChange={v => f('host', v)} placeholder="mqtt.example.com" error={errors.host} />
+              </FieldRow>
+            </div>
+            <FieldRow label="Port" error={errors.port}>
+              <FInput value={form.port || '1883'} onChange={v => f('port', v)} placeholder="1883" error={errors.port} />
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Username">
+              <FInput value={form.username} onChange={v => f('username', v)} placeholder="optional" />
+            </FieldRow>
+            <FieldRow label="Password">
+              <FInput type="password" value={form.password} onChange={v => f('password', v)} placeholder="optional" />
+            </FieldRow>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Protocol">
+              <FSelect value={form.protocol} onChange={v => f('protocol', v as MqttForm['protocol'])}>
+                <option value="mqtt">mqtt://</option>
+                <option value="mqtts">mqtts:// (TLS)</option>
+                <option value="ws">ws:// (WebSocket)</option>
+                <option value="wss">wss:// (WebSocket TLS)</option>
+              </FSelect>
+            </FieldRow>
+            <div className="flex items-end">
+              <Toggle value={form.tls} onChange={v => { f('tls', v); if (v) f('protocol', 'mqtts') }} label="TLS / SSL" />
+            </div>
+          </div>
+        </>
+      )}
+      <Divider label="Default Topic" />
+      <FieldRow label="Default Topic Filter">
+        <FInput value={form.defaultTopic} onChange={v => f('defaultTopic', v)} placeholder="# (all topics), sensors/+/temperature" />
+      </FieldRow>
+      <Divider label="Schedule" />
+      <FieldRow label="Sync Interval"><ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} /></FieldRow>
+    </div>
+  )
 }
 
 /* ── File Upload Configure step ───────────────────────────────────── */
@@ -2963,6 +3281,9 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
   const [sftpForm, setSftpForm]       = useState<SftpForm>(INIT_SFTP)
   const [bqForm, setBqForm]           = useState<BigQueryForm>(INIT_BQ)
   const [redisForm, setRedisForm]     = useState<RedisForm>(INIT_REDIS)
+  const [mssqlForm, setMssqlForm]     = useState<MssqlForm>(INIT_MSSQL)
+  const [rabbitForm, setRabbitForm]   = useState<RabbitMQForm>(INIT_RABBIT)
+  const [mqttForm, setMqttForm]       = useState<MqttForm>(INIT_MQTT)
   const [fileForm, setFileForm]       = useState<FileForm>({ name: '', description: '', file: null, fileName: '', fileSize: 0, format: '', parsedRows: [], detectedCols: [], parseError: '' })
   const [aiForm, setAiForm]           = useState<AppInsightsForm>(INIT_AI)
   const [azureMonitorForm, setAzureMonitorForm] = useState<AzureMonitorForm>(INIT_AZURE_MONITOR)
@@ -3223,6 +3544,9 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
       case 'webhook': return webhookForm
       case 'postgresql': case 'mysql': case 'mongodb': return dbForm
       case 'redis': return redisForm
+      case 'mssql': return mssqlForm
+      case 'rabbitmq': return rabbitForm
+      case 'mqtt': return mqttForm
       case 's3': return s3Form
       case 'sftp': return sftpForm
       case 'bigquery': return bqForm
@@ -3246,6 +3570,9 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
       case 'webhook': return validateWebhook(webhookForm)
       case 'postgresql': case 'mysql': case 'mongodb': return validateDatabase(dbForm, type)
       case 'redis': return validateRedis(redisForm)
+      case 'mssql': return validateMssql(mssqlForm)
+      case 'rabbitmq': return validateRabbitMQ(rabbitForm)
+      case 'mqtt': return validateMqtt(mqttForm)
       case 's3': return validateS3(s3Form)
       case 'sftp': return validateSftp(sftpForm)
       case 'bigquery': return validateBigQuery(bqForm)
@@ -3336,6 +3663,18 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         ? redisForm.connectionMode === 'connectionString'
           ? redisForm.connectionString
           : `${redisForm.tls ? 'rediss' : 'redis'}://${redisForm.host}:${redisForm.port}/${redisForm.database || '0'}`
+        : type === 'mssql'
+        ? mssqlForm.connectionMode === 'connectionString'
+          ? mssqlForm.connectionString
+          : `${mssqlForm.host}:${mssqlForm.port || 1433}/${mssqlForm.database || 'master'}`
+        : type === 'rabbitmq'
+        ? rabbitForm.connectionMode === 'connectionString'
+          ? rabbitForm.connectionString
+          : `${rabbitForm.tls ? 'amqps' : 'amqp'}://${rabbitForm.host}:${rabbitForm.port || 5672}/${rabbitForm.vhost || '/'}`
+        : type === 'mqtt'
+        ? mqttForm.connectionMode === 'connectionString'
+          ? mqttForm.connectionString
+          : `${mqttForm.protocol || 'mqtt'}://${mqttForm.host}:${mqttForm.port || 1883}`
         : type === 'appinsights'
         ? aiForm.authMode === 'api_key'
           ? `api.applicationinsights.io/v1/apps/${resolvedAiAppId.slice(0, 8)}…`
@@ -3360,6 +3699,9 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         type === 'github'     ? (githubForm.authMode === 'pat' ? 'Personal access token' : githubForm.authMode === 'oauth' ? 'GitHub OAuth' : 'GitHub App installation') :
         type === 'azuredevops'? (azureDevOpsForm.authMode === 'pat' ? 'Personal access token' : 'Microsoft Entra delegated auth') :
         type === 'redis'      ? 'Redis auth' :
+        type === 'mssql'      ? (mssqlForm.encrypt ? 'TLS + password' : 'password') :
+        type === 'rabbitmq'   ? 'username/password' :
+        type === 'mqtt'       ? (mqttForm.username ? 'username/password' : 'anonymous') :
         type === 'appinsights'? (aiForm.authMode === 'api_key' ? 'App Insights API key' : 'OAuth2 client_credentials') :
         type === 'azuremonitor' ? 'OAuth2 client_credentials' :
         type === 'elasticsearch' ? (elasticForm.authType === 'apikey' ? 'API key' : 'Basic auth') :
@@ -3381,6 +3723,12 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         :
         type === 'redis'
           ? `Redis · ${redisForm.defaultQueryMode} · ${redisForm.defaultKeyPattern || '*'}`
+        : type === 'mssql'
+          ? `SQL Server · ${mssqlForm.database || 'master'} · schema: ${mssqlForm.schema || 'dbo'}`
+        : type === 'rabbitmq'
+          ? `RabbitMQ · vhost: ${rabbitForm.vhost || '/'} · default: ${rabbitForm.defaultCatalog}`
+        : type === 'mqtt'
+          ? `MQTT · topic: ${mqttForm.defaultTopic || '#'}`
         : type === 'appinsights'
           ? aiForm.authMode === 'api_key'
             ? `App Insights API key · app: ${resolvedAiAppId.slice(0, 8)}…`
@@ -3414,6 +3762,50 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
             defaultKeyPattern: redisForm.defaultKeyPattern,
             defaultSearchIndex: redisForm.defaultSearchIndex,
             schedule: redisForm.schedule,
+          }
+        : type === 'mssql'
+        ? {
+            connectionMode: mssqlForm.connectionMode,
+            connectionString: mssqlForm.connectionString,
+            host: mssqlForm.host,
+            port: Number(mssqlForm.port || 1433),
+            database: mssqlForm.database || 'master',
+            dbUser: mssqlForm.dbUser,
+            dbPass: mssqlForm.dbPass,
+            instanceName: mssqlForm.instanceName,
+            encrypt: mssqlForm.encrypt,
+            trustServerCertificate: mssqlForm.trustServerCertificate,
+            schema: mssqlForm.schema || 'dbo',
+            defaultCatalog: mssqlForm.defaultCatalog,
+            schedule: mssqlForm.schedule,
+          }
+        : type === 'rabbitmq'
+        ? {
+            connectionMode: rabbitForm.connectionMode,
+            connectionString: rabbitForm.connectionString,
+            host: rabbitForm.host,
+            port: Number(rabbitForm.port || 5672),
+            managementPort: Number(rabbitForm.managementPort || 15672),
+            vhost: rabbitForm.vhost || '/',
+            username: rabbitForm.username,
+            password: rabbitForm.password,
+            tls: rabbitForm.tls,
+            managementTls: rabbitForm.managementTls,
+            defaultCatalog: rabbitForm.defaultCatalog,
+            schedule: rabbitForm.schedule,
+          }
+        : type === 'mqtt'
+        ? {
+            connectionMode: mqttForm.connectionMode,
+            connectionString: mqttForm.connectionString,
+            host: mqttForm.host,
+            port: Number(mqttForm.port || 1883),
+            username: mqttForm.username,
+            password: mqttForm.password,
+            tls: mqttForm.tls,
+            protocol: mqttForm.protocol || 'mqtt',
+            defaultTopic: mqttForm.defaultTopic || '#',
+            schedule: mqttForm.schedule,
           }
         : type === 'azureb2c'
         ? {
@@ -3609,6 +4001,9 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
           {step === 1 && type === 'webhook' && <WebhookConfigure form={webhookForm} set={setWebhookForm} errors={errors} />}
           {step === 1 && (type === 'postgresql' || type === 'mysql' || type === 'mongodb') && <DatabaseConfigure form={dbForm} set={setDbForm} errors={errors} type={type} />}
           {step === 1 && type === 'redis' && <RedisConfigure form={redisForm} set={setRedisForm} errors={errors} />}
+          {step === 1 && type === 'mssql' && <MssqlConfigure form={mssqlForm} set={setMssqlForm} errors={errors} />}
+          {step === 1 && type === 'rabbitmq' && <RabbitMQConfigure form={rabbitForm} set={setRabbitForm} errors={errors} />}
+          {step === 1 && type === 'mqtt' && <MqttConfigure form={mqttForm} set={setMqttForm} errors={errors} />}
           {step === 1 && type === 's3' && <S3Configure form={s3Form} set={setS3Form} errors={errors} />}
           {step === 1 && type === 'sftp' && <SftpConfigure form={sftpForm} set={setSftpForm} errors={errors} />}
           {step === 1 && type === 'bigquery' && <BigQueryConfigure form={bqForm} set={setBqForm} errors={errors} />}

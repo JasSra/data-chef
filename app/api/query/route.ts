@@ -25,6 +25,9 @@ import {
   type RedisQueryMode,
   type RedisValueType,
 } from '@/lib/redis'
+import { executeMssqlQuery, fetchMssqlCatalog, type MssqlCatalogKind, type MssqlQueryMode } from '@/lib/mssql'
+import { executeRabbitQuery, type RabbitCatalogKind, type RabbitQueryMode } from '@/lib/rabbitmq'
+import { executeMqttQuery, type MqttCatalogKind, type MqttQueryMode } from '@/lib/mqtt'
 import { executeFederatedSql, type FederatedSourceBinding } from '@/lib/federated-query'
 import { getRecipe, type QueryRecipe, type RecipeVariableDefinition } from '@/lib/query-recipes'
 import { inferVariablesFromRecipe } from '@/lib/query-designer'
@@ -395,6 +398,83 @@ export async function POST(req: NextRequest) {
             timespanIso: resolvedTimeWindow.timespanIso,
             bucketHint: resolvedTimeWindow.bucketHint,
           },
+          timeWindow: resolvedTimeWindow,
+          sourceBindings: explainableBindings([source]),
+        }, { status: result.error ? 400 : 200 })
+      }
+
+      if (connector.type === 'mssql') {
+        const runtimeConfig = getConnectorRuntimeConfig(source.sourceId)
+        if (!runtimeConfig) {
+          return NextResponse.json({ error: `No runtime config for "${connector.name}"` }, { status: 404 })
+        }
+        const mode = String(body.mssqlMode ?? body.mode ?? 'query').toLowerCase() as MssqlQueryMode
+        const catalog = body.catalog ? String(body.catalog).toLowerCase() as MssqlCatalogKind : undefined
+        const result = mode === 'catalog'
+          ? await fetchMssqlCatalog(runtimeConfig, {
+              catalog: catalog ?? (String(runtimeConfig.defaultCatalog ?? 'tables') as MssqlCatalogKind),
+              schema: body.schema ? String(body.schema) : undefined,
+              table: body.table ? String(body.table) : undefined,
+              limit: Number(body.rowLimit) || 500,
+            })
+          : await executeMssqlQuery(runtimeConfig, {
+              query: renderedQuery || `SELECT TOP 100 * FROM [${String(runtimeConfig.schema ?? 'dbo')}].[${source.resource ?? 'your_table'}]`,
+              rowLimit: Number(body.rowLimit) || 500,
+            })
+        return NextResponse.json({
+          ...result,
+          bytesScanned: 0, renderedQuery, executionMode: 'pushdown', warnings: [],
+          recipeId: recipe?.id ?? null,
+          boundVariables: { ...coercedVariables, timeWindow: resolvedTimeWindow.preset },
+          timeWindow: resolvedTimeWindow,
+          sourceBindings: explainableBindings([source]),
+        }, { status: result.error ? 400 : 200 })
+      }
+
+      if (connector.type === 'rabbitmq') {
+        const runtimeConfig = getConnectorRuntimeConfig(source.sourceId)
+        if (!runtimeConfig) {
+          return NextResponse.json({ error: `No runtime config for "${connector.name}"` }, { status: 404 })
+        }
+        const mode = String(body.rabbitMode ?? body.mode ?? 'catalog').toLowerCase() as RabbitQueryMode
+        const catalog = body.catalog ? String(body.catalog).toLowerCase() as RabbitCatalogKind : undefined
+        const queue = body.queue ? String(body.queue) : source.resource
+        const result = await executeRabbitQuery(runtimeConfig, {
+          mode,
+          queue: queue ?? undefined,
+          catalog: catalog ?? (String(runtimeConfig.defaultCatalog ?? 'queues') as RabbitCatalogKind),
+          limit: Number(body.rowLimit) || 200,
+        })
+        return NextResponse.json({
+          ...result,
+          bytesScanned: 0, renderedQuery, executionMode: 'pushdown', warnings: [],
+          recipeId: recipe?.id ?? null,
+          boundVariables: { ...coercedVariables, timeWindow: resolvedTimeWindow.preset },
+          timeWindow: resolvedTimeWindow,
+          sourceBindings: explainableBindings([source]),
+        }, { status: result.error ? 400 : 200 })
+      }
+
+      if (connector.type === 'mqtt') {
+        const runtimeConfig = getConnectorRuntimeConfig(source.sourceId)
+        if (!runtimeConfig) {
+          return NextResponse.json({ error: `No runtime config for "${connector.name}"` }, { status: 404 })
+        }
+        const mode = String(body.mqttMode ?? body.mode ?? 'subscribe').toLowerCase() as MqttQueryMode
+        const catalog = body.catalog ? String(body.catalog).toLowerCase() as MqttCatalogKind : undefined
+        const topic = renderedQuery.trim() || body.topic as string || source.resource || String(runtimeConfig.defaultTopic ?? '#')
+        const result = await executeMqttQuery(runtimeConfig, {
+          mode,
+          query: topic,
+          catalog: catalog ?? 'topics',
+          limit: Number(body.rowLimit) || 200,
+          windowMs: Number(body.windowMs) || 5_000,
+        })
+        return NextResponse.json({
+          ...result,
+          bytesScanned: 0, renderedQuery, executionMode: 'pushdown', warnings: [],
+          recipeId: recipe?.id ?? null,
+          boundVariables: { ...coercedVariables, timeWindow: resolvedTimeWindow.preset },
           timeWindow: resolvedTimeWindow,
           sourceBindings: explainableBindings([source]),
         }, { status: result.error ? 400 : 200 })

@@ -732,6 +732,58 @@ export async function POST(req: NextRequest) {
             return
           }
 
+        } else if (connectorType === 'mssql') {
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Connecting to SQL Server ${String(body.host || 'localhost')}:${String(body.port || 1433)}…` }))
+          await sleep(120)
+          try {
+            const { probeMssqlConnection } = await import('@/lib/mssql')
+            const probe = await probeMssqlConnection(body)
+            if (!probe.ok) throw new Error(probe.error ?? 'Connection failed')
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Connected to SQL Server${probe.database ? ` · database: ${probe.database}` : ''}` }))
+            if (probe.serverVersion) controller.enqueue(sse({ type: 'log', level: 'info', msg: probe.serverVersion.slice(0, 80) }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
+        } else if (connectorType === 'rabbitmq') {
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Connecting to RabbitMQ management API at ${String(body.host || 'localhost')}:${String(body.managementPort || 15672)}…` }))
+          await sleep(120)
+          try {
+            const { probeRabbitConnection } = await import('@/lib/rabbitmq')
+            const probe = await probeRabbitConnection(body)
+            if (!probe.ok) throw new Error(probe.error ?? 'Connection failed')
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Connected to RabbitMQ${probe.version ? ` ${probe.version}` : ''}${probe.cluster ? ` · cluster: ${probe.cluster}` : ''}` }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
+        } else if (connectorType === 'mqtt') {
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Connecting to MQTT broker ${String(body.host || 'localhost')}:${String(body.port || 1883)}…` }))
+          await sleep(120)
+          try {
+            const { probeMqttConnection } = await import('@/lib/mqtt')
+            const probe = await probeMqttConnection(body)
+            if (!probe.ok) throw new Error(probe.error ?? 'Connection failed')
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Connected to MQTT broker${probe.broker ? ` · ${probe.broker}` : ''}` }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
         } else if (['postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery'].includes(connectorType)) {
           controller.enqueue(sse({ type: 'log', level: 'info', msg: `Starting live ${connectorType} probe` }))
           await sleep(120)

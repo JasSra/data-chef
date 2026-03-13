@@ -12,6 +12,7 @@ import {
 import StatusBadge from '@/components/StatusBadge'
 import ConnectorWizard, { ConnectorJob, NewConnector, ConnectorId, DiscoveryConnectorDraft } from '@/components/ConnectorWizard'
 import BrandIcon from '@/components/BrandIcon'
+import ConfirmDialog from '@/components/ConfirmDialog'
 
 /* ── Types ───────────────────────────────────────────────────────── */
 type ConnStatus = 'connected' | 'disconnected' | 'running'
@@ -61,7 +62,10 @@ const TYPE_CFG: Record<ConnectorId, { Icon?: React.ElementType; brandClass?: str
   postgresql: { Icon: Database,  color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/20',   label: 'PostgreSQL' },
   mysql:      { Icon: Database,  color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/20', label: 'MySQL' },
   mongodb:    { Icon: Database,  color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', label: 'MongoDB' },
-  redis:      { Icon: Database,  color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20', label: 'Redis' },
+  redis:      { Icon: Database,  color: 'text-red-400',    bg: 'bg-red-500/10',     border: 'border-red-500/20',    label: 'Redis' },
+  mssql:      { Icon: Database,  color: 'text-sky-300',    bg: 'bg-sky-500/10',     border: 'border-sky-500/20',    label: 'SQL Server' },
+  rabbitmq:   { Icon: Zap,       color: 'text-orange-300', bg: 'bg-orange-500/10',  border: 'border-orange-500/20', label: 'RabbitMQ' },
+  mqtt:       { Icon: Zap,       color: 'text-emerald-300', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', label: 'MQTT' },
   bigquery:   { brandClass: 'fa-brands fa-google', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20', label: 'BigQuery' },
   file:       { Icon: FileText,  color: 'text-lime-400',    bg: 'bg-lime-500/10',    border: 'border-lime-500/20',    label: 'File Upload' },
   appinsights:{ brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', label: 'App Insights' },
@@ -114,7 +118,7 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 
 const SPARK_COLORS: Record<ConnectorId, string> = {
   http: '#38bdf8', github: '#d4d4d8', azuredevops: '#67e8f9', webhook: '#fbbf24', s3: '#a78bfa', sftp: '#94a3b8',
-  postgresql: '#60a5fa', mysql: '#fb923c', mongodb: '#34d399', redis: '#f87171', bigquery: '#fb7185',
+  postgresql: '#60a5fa', mysql: '#fb923c', mongodb: '#34d399', redis: '#f87171', mssql: '#7dd3fc', rabbitmq: '#fdba74', mqtt: '#6ee7b7', bigquery: '#fb7185',
   file:        '#a3e635',
   appinsights: '#22d3ee',
   azuremonitor:'#67e8f9',
@@ -343,7 +347,7 @@ function JobsPanel({ jobs, onClose }: { jobs: ConnectorJob[]; onClose: () => voi
 }
 
 /* ── Detail Panel ────────────────────────────────────────────────── */
-function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit, onClose }: {
+function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit, onDelete, onClose, deleteBusy }: {
   conn: Connection
   onToggle: () => void
   onSync: () => void
@@ -351,7 +355,9 @@ function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit
   onCopy: () => void
   onClone: () => void
   onEdit: () => void
+  onDelete: () => void
   onClose: () => void
+  deleteBusy: boolean
 }) {
   const tc = getTypeConfig(conn.type)
   const [copied, setCopied] = useState(false)
@@ -388,6 +394,13 @@ function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit
             </button>
             <button onClick={onEdit} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-chef-border text-chef-muted hover:text-chef-text hover:border-indigo-500/20 hover:bg-chef-card transition-colors">
               <Settings size={12} /> Edit
+            </button>
+            <button
+              onClick={onDelete}
+              disabled={deleteBusy}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <X size={12} /> Delete
             </button>
             {conn.status === 'connected' && (
               <button onClick={onSync} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors">
@@ -487,6 +500,8 @@ export default function ConnectionsPage() {
   const [selected, setSelected] = useState<Connection | null>(null)
   const [filter, setFilter] = useState<FilterType>('all')
   const [showWizard, setShowWizard] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [jobs, setJobs] = useState<ConnectorJob[]>([])
   const [showJobs, setShowJobs] = useState(false)
   const [transferNotice, setTransferNotice] = useState<{ tone: 'success' | 'error'; msg: string } | null>(null)
@@ -892,6 +907,41 @@ async function cloneConnector(conn: Connection) {
     }
   }
 
+  async function deleteSelectedConnector() {
+    if (!selected || deleteBusy) return
+
+    try {
+      setDeleteBusy(true)
+      const conn = selected
+      const res = await fetch(`/api/connectors/${conn.id}`, { method: 'DELETE' })
+      const data = await res.json() as {
+        error?: string
+        deletedDatasets?: number
+        deletedPipelines?: number
+        deletedSavedQueries?: number
+      }
+      if (!res.ok) throw new Error(data.error ?? 'Delete failed')
+
+      setConns(prev => prev.filter(item => item.id !== conn.id))
+      setSelected(null)
+      setShowDeleteDialog(false)
+      await loadDiscovery()
+
+      const summary = [
+        `Deleted connector "${conn.name}"`,
+        data.deletedDatasets ? `, ${data.deletedDatasets} dataset${data.deletedDatasets === 1 ? '' : 's'}` : '',
+        data.deletedPipelines ? `, ${data.deletedPipelines} pipeline${data.deletedPipelines === 1 ? '' : 's'}` : '',
+        data.deletedSavedQueries ? `, ${data.deletedSavedQueries} saved quer${data.deletedSavedQueries === 1 ? 'y' : 'ies'}` : '',
+      ].join('')
+      showNotice('success', summary)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Delete failed'
+      showNotice('error', msg)
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
   // Panel layout widths
   const hasDetail = !!selected
   const hasJobs = showJobs
@@ -1122,7 +1172,9 @@ async function cloneConnector(conn: Connection) {
             onCopy={() => void copyConfigToClipboard([selected.id])}
             onClone={() => void cloneConnector(selected)}
             onEdit={() => void editConnector(selected)}
+            onDelete={() => setShowDeleteDialog(true)}
             onClose={() => setSelected(null)}
+            deleteBusy={deleteBusy}
           />
         </div>
       )}
@@ -1145,6 +1197,25 @@ async function cloneConnector(conn: Connection) {
           initialDraft={wizardDraft}
         />
       )}
+
+      <ConfirmDialog
+        open={showDeleteDialog && !!selected}
+        title={selected ? `Delete ${selected.name}?` : 'Delete connector?'}
+        description="This will remove the connector and cascade delete data that depends on it."
+        details={selected ? [
+          `${selected.datasets.length} linked dataset${selected.datasets.length === 1 ? '' : 's'} will be deleted.`,
+          'Pipelines sourced from this connector or its datasets will also be deleted.',
+          'Saved observability queries tied to this connector will be removed.',
+        ] : []}
+        confirmLabel="Delete connector"
+        tone="danger"
+        busy={deleteBusy}
+        onCancel={() => {
+          if (deleteBusy) return
+          setShowDeleteDialog(false)
+        }}
+        onConfirm={() => void deleteSelectedConnector()}
+      />
     </div>
   )
 }

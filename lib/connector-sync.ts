@@ -22,6 +22,8 @@ interface RunConnectorSyncOptions {
   manageWorker?: boolean
 }
 
+const CONNECTOR_PREVIEW_SAMPLE_LIMIT = 100
+
 function isScheduledInterval(value: string): boolean {
   return ['1h', '6h', '24h'].includes(value)
 }
@@ -68,7 +70,7 @@ export async function runConnectorSyncJob(
         resource: dataset.resource,
       })
       totalRecords += rows.length
-      updateDatasetSchema(dataset.id, inferSchema(rows), rows.slice(0, 5), rows.length)
+      updateDatasetSchema(dataset.id, inferSchema(rows), rows.slice(0, CONNECTOR_PREVIEW_SAMPLE_LIMIT), rows.length)
     }
 
     const durationMs = Date.now() - startedAt

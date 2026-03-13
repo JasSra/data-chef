@@ -137,6 +137,7 @@ interface PipelineStateFile {
   pipelines: PipelineDef[]
   runHistory: Record<string, RunRecord[]>
   runsToday: Record<string, number>
+  deletedIds?: string[]
 }
 
 interface TenantPipelineRuntime {
@@ -221,6 +222,7 @@ function seedState(): PipelineStateFile {
     ],
     runHistory: {},
     runsToday: {},
+    deletedIds: [],
   }
 }
 
@@ -236,11 +238,14 @@ function normalizeRunRecord(run: RunRecord): RunRecord {
 
 function readState(): PipelineStateFile {
   const state = readJsonFile<PipelineStateFile>(PIPELINE_STORE_FILE, seedState())
+  const deletedIds = new Set(state.deletedIds ?? [])
   const mergedPipelines = new Map<string, PipelineDef>()
   for (const pipeline of seedState().pipelines) {
+    if (deletedIds.has(pipeline.id)) continue
     mergedPipelines.set(pipeline.id, normalizePipeline(pipeline))
   }
   for (const pipeline of state.pipelines) {
+    if (deletedIds.has(pipeline.id)) continue
     mergedPipelines.set(pipeline.id, normalizePipeline({
       ...pipeline,
       steps: pipeline.steps.map(step => ({ ...step, logLines: step.logLines ? [...step.logLines] : undefined })),
@@ -255,6 +260,7 @@ function readState(): PipelineStateFile {
       Object.entries(state.runHistory ?? {}).map(([id, history]) => [id, history.map(normalizeRunRecord)]),
     ),
     runsToday: Object.fromEntries(Object.entries(state.runsToday ?? {}).map(([id, count]) => [id, Number(count) || 0])),
+    deletedIds: [...deletedIds],
   }
 }
 
@@ -317,6 +323,52 @@ export function updatePipeline(id: string, patch: Partial<Omit<PipelineDef, 'id'
   writeJsonFile<PipelineStateFile>(PIPELINE_STORE_FILE, state)
   invalidateSearchIndex()
   return existing
+}
+
+export function deletePipelinesReferencingSource(sourceType: SourceType, sourceId: string): number {
+  const state = readState()
+  const before = state.pipelines.length
+  const removedIds = [
+    state.pipelines
+      .filter(pipeline => (pipeline.sourceType ?? 'dataset') === sourceType && (pipeline.sourceId ?? pipeline.dataset) === sourceId)
+      .map(pipeline => pipeline.id),
+  ].flat()
+  if (removedIds.length === 0) return 0
+
+  const removedIdSet = new Set(removedIds)
+  state.pipelines = state.pipelines.filter(pipeline => !removedIdSet.has(pipeline.id))
+  state.deletedIds = Array.from(new Set([...(state.deletedIds ?? []), ...removedIds]))
+  for (const id of removedIds) {
+    delete state.runHistory[id]
+    delete state.runsToday[id]
+    getRuntime().latestRunResults.delete(id)
+  }
+  writeJsonFile<PipelineStateFile>(PIPELINE_STORE_FILE, state)
+  invalidateSearchIndex()
+  return before - state.pipelines.length
+}
+
+export function deletePipelinesWritingDataset(datasetId: string): number {
+  const state = readState()
+  const before = state.pipelines.length
+  const removedIds = [
+    state.pipelines
+      .filter(pipeline => pipeline.outputTarget?.mode === 'dataset' && pipeline.outputTarget.datasetId === datasetId)
+      .map(pipeline => pipeline.id),
+  ].flat()
+  if (removedIds.length === 0) return 0
+
+  const removedIdSet = new Set(removedIds)
+  state.pipelines = state.pipelines.filter(pipeline => !removedIdSet.has(pipeline.id))
+  state.deletedIds = Array.from(new Set([...(state.deletedIds ?? []), ...removedIds]))
+  for (const id of removedIds) {
+    delete state.runHistory[id]
+    delete state.runsToday[id]
+    getRuntime().latestRunResults.delete(id)
+  }
+  writeJsonFile<PipelineStateFile>(PIPELINE_STORE_FILE, state)
+  invalidateSearchIndex()
+  return before - state.pipelines.length
 }
 
 /* ── Run history (module-level, persists across requests) ────────────────────── */
@@ -450,7 +502,12 @@ export function exportPipelineTemplate(pipeline: PipelineDef): PipelineTemplate 
 }
 
 export function clearPipelines(): void {
-  writeJsonFile<PipelineStateFile>(PIPELINE_STORE_FILE, { pipelines: [], runHistory: {}, runsToday: {} })
+  writeJsonFile<PipelineStateFile>(PIPELINE_STORE_FILE, {
+    pipelines: [],
+    runHistory: {},
+    runsToday: {},
+    deletedIds: seedState().pipelines.map(pipeline => pipeline.id),
+  })
   const runtime = getRuntime()
   runtime.latestRunResults.clear()
   runtime.activeRuns = 0

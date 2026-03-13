@@ -74,7 +74,15 @@ export async function POST(req: NextRequest) {
   }
 
   const endpointCount = countEndpoints(normalized.paths as Record<string, Record<string, unknown>>)
-  const baseUrl = normalized.servers?.[0]?.url ?? url.replace(/\/[^/]*$/, '')
+
+  // Derive base URL: prefer spec's own servers[0].url, then fall back to the
+  // *origin* of the swagger URL so /swagger/v1/swagger.json → https://host
+  let baseUrl = normalized.servers?.[0]?.url ?? ''
+  if (!baseUrl) {
+    try { baseUrl = new URL(url).origin } catch { baseUrl = '' }
+  }
+  // Strip any swagger-specific path segments that may have leaked in via basePath
+  baseUrl = baseUrl.replace(/\/swagger(\/[^/]+)*\/?$/, '').replace(/\/+$/, '')
 
   // Determine auth schemes from spec
   const securitySchemes = normalized.components?.securitySchemes ?? {}

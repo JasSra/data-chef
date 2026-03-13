@@ -12,6 +12,7 @@ import StatusBadge from '@/components/StatusBadge'
 import type { RMCharacter } from '@/lib/rm-api'
 import NewDatasetWizard from '@/components/NewDatasetWizard'
 import type { DatasetRecord, SchemaField } from '@/lib/datasets'
+import ConfirmDialog from '@/components/ConfirmDialog'
 
 /* ── Types ───────────────────────────────────────────────────────────────── */
 type Tab = 'preview' | 'schema' | 'runs'
@@ -22,6 +23,9 @@ interface ServerPreview {
   rowCount:   number
   durationMs: number
 }
+
+const DATASET_PREVIEW_PAGE_SIZE = 25
+const LIVE_PREVIEW_PAGE_SIZE = 50
 
 /* ── Flat schema table (for real inferred schemas) ───────────────────────── */
 const TYPE_COLORS: Record<string, string> = {
@@ -117,11 +121,17 @@ function eventTypeBadge(t: string) {
 export default function DatasetsPage() {
   const router = useRouter()
   const [showWizard, setShowWizard] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [datasets,   setDatasets]   = useState<DatasetRecord[]>([])
   const [selected,   setSelected]   = useState<DatasetRecord | null>(null)
   const [tab,        setTab]        = useState<Tab>('preview')
   const [search,     setSearch]     = useState('')
   const [loading,    setLoading]    = useState(true)
+  const [notice,     setNotice]     = useState<{ ok: boolean; msg: string } | null>(null)
+  const [visibleStoredRows, setVisibleStoredRows] = useState(DATASET_PREVIEW_PAGE_SIZE)
+  const [visibleLiveRows, setVisibleLiveRows] = useState(LIVE_PREVIEW_PAGE_SIZE)
+  const [visibleServerRows, setVisibleServerRows] = useState(LIVE_PREVIEW_PAGE_SIZE)
 
   /* Rick & Morty live data */
   const [liveChars,   setLiveChars]   = useState<RMCharacter[]>([])
@@ -148,6 +158,12 @@ export default function DatasetsPage() {
   }, [])
 
   useEffect(() => { loadDatasets() }, [loadDatasets])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   /* Keep selected in sync after reload */
   useEffect(() => {
@@ -229,11 +245,18 @@ export default function DatasetsPage() {
   /* Reset refresh state when selected changes */
   useEffect(() => { setRefreshResult(null) }, [selected?.id])
 
+  useEffect(() => {
+    setVisibleStoredRows(DATASET_PREVIEW_PAGE_SIZE)
+    setVisibleLiveRows(LIVE_PREVIEW_PAGE_SIZE)
+    setVisibleServerRows(LIVE_PREVIEW_PAGE_SIZE)
+  }, [selected?.id, tab])
+
   const filtered = datasets.filter(d =>
     d.name.toLowerCase().includes(search.toLowerCase()) ||
     d.format.toLowerCase().includes(search.toLowerCase())
   )
   const canRefreshFromSource = Boolean(selected?.url || selected?.connectorId)
+  const selectedSampleRows = selected?.sampleRows ?? []
 
   const formatBadge = (fmt: string) => {
     const colors: Record<string, string> = {
@@ -255,6 +278,32 @@ export default function DatasetsPage() {
     ? `~${(totalRecords / 1_000_000).toFixed(1)}M`
     : `~${(totalRecords / 1_000).toFixed(0)}K`
 
+  async function handleDeleteDataset() {
+    if (!selected || deleteBusy) return
+
+    try {
+      setDeleteBusy(true)
+      const dataset = selected
+      const res = await fetch(`/api/datasets/${dataset.id}`, { method: 'DELETE' })
+      const data = await res.json() as { error?: string; deletedPipelines?: number }
+      if (!res.ok) throw new Error(data.error ?? 'Delete failed')
+
+      setDatasets(prev => prev.filter(item => item.id !== dataset.id))
+      setSelected(null)
+      setShowDeleteDialog(false)
+      setNotice({
+        ok: true,
+        msg: data.deletedPipelines
+          ? `Deleted dataset and ${data.deletedPipelines} related pipeline${data.deletedPipelines === 1 ? '' : 's'}`
+          : 'Deleted dataset',
+      })
+    } catch (e) {
+      setNotice({ ok: false, msg: e instanceof Error ? e.message : 'Delete failed' })
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
   return (
     <div className="flex h-full">
       {/* ── Left: dataset list ── */}
@@ -270,6 +319,16 @@ export default function DatasetsPage() {
             <Plus size={13} /> New Dataset
           </button>
         </div>
+        {notice && (
+          <div className={`mx-4 mt-3 inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[11px] ${
+            notice.ok
+              ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+              : 'border-rose-500/20 bg-rose-500/10 text-rose-300'
+          }`}>
+            {notice.ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+            <span>{notice.msg}</span>
+          </div>
+        )}
 
         {/* Search */}
         <div className="px-4 py-3 border-b border-chef-border">
@@ -424,6 +483,13 @@ export default function DatasetsPage() {
                 </button>
               )}
               <button
+                onClick={() => setShowDeleteDialog(true)}
+                disabled={deleteBusy}
+                className="flex items-center gap-1.5 text-[11px] text-rose-400 border border-rose-500/30 rounded-lg px-2.5 py-1.5 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
+              >
+                <X size={11} /> Delete
+              </button>
+              <button
                 onClick={handleRefresh}
                 disabled={refreshing}
                 title="Re-fetch schema from source"
@@ -475,7 +541,7 @@ export default function DatasetsPage() {
                     </span>
                   ) : (
                     <span className="text-chef-muted">
-                      Showing {Math.min(100, liveChars.length)} of {liveChars.length} records · live · 10 columns
+                      Showing {Math.min(visibleLiveRows, liveChars.length)} of {liveChars.length} records · live · 10 columns
                     </span>
                   )}
                   <span className="ml-auto flex items-center gap-1 text-emerald-400">
@@ -500,7 +566,7 @@ export default function DatasetsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {liveChars.slice(0, 100).map((c, i) => (
+                        {liveChars.slice(0, visibleLiveRows).map((c, i) => (
                           <tr key={i} className="border-b border-chef-border hover:bg-chef-card/50 transition-colors">
                             <td className="px-4 py-2 text-[11px] font-mono text-orange-300">{String(c.id ?? '')}</td>
                             <td className="px-4 py-2 text-[11px] font-mono text-indigo-300 whitespace-nowrap">{String(c.name ?? '')}</td>
@@ -522,9 +588,17 @@ export default function DatasetsPage() {
                         ))}
                       </tbody>
                     </table>
-                    {liveChars.length > 100 && (
-                      <div className="px-5 py-3 text-[10px] text-chef-muted border-t border-chef-border">
-                        Showing first 100 of {liveChars.length} records.{' '}
+                    {liveChars.length > LIVE_PREVIEW_PAGE_SIZE && (
+                      <div className="px-5 py-3 text-[10px] text-chef-muted border-t border-chef-border flex items-center gap-3">
+                        <span>Showing {Math.min(visibleLiveRows, liveChars.length)} of {liveChars.length} records.</span>
+                        {visibleLiveRows < liveChars.length && (
+                          <button
+                            onClick={() => setVisibleLiveRows(prev => Math.min(prev + LIVE_PREVIEW_PAGE_SIZE, liveChars.length))}
+                            className="text-indigo-400 hover:underline"
+                          >
+                            Load more
+                          </button>
+                        )}
                         <button onClick={() => handleQueryLink(selected)} className="text-indigo-400 hover:underline">
                           Open in Query Editor →
                         </button>
@@ -572,7 +646,7 @@ export default function DatasetsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {serverPreview.rows.map((row, i) => (
+                        {serverPreview.rows.slice(0, visibleServerRows).map((row, i) => (
                           <tr key={i} className="border-b border-chef-border hover:bg-chef-card/50 transition-colors">
                             {serverPreview.columns.map((col, j) => (
                               <td key={col} className={`px-4 py-2 text-[11px] font-mono whitespace-nowrap ${
@@ -596,7 +670,15 @@ export default function DatasetsPage() {
                       </tbody>
                     </table>
                     <div className="px-5 py-3 text-[10px] text-chef-muted border-t border-chef-border flex items-center gap-2">
-                      <span>Showing first 50 rows — served from /api/query server-side.</span>
+                      <span>Showing {Math.min(visibleServerRows, serverPreview.rows.length)} of {serverPreview.rows.length} preview rows — served from /api/query server-side.</span>
+                      {visibleServerRows < serverPreview.rows.length && (
+                        <button
+                          onClick={() => setVisibleServerRows(prev => Math.min(prev + LIVE_PREVIEW_PAGE_SIZE, serverPreview.rows.length))}
+                          className="text-indigo-400 hover:underline"
+                        >
+                          Load more
+                        </button>
+                      )}
                       <button onClick={() => handleQueryLink(selected)} className="text-indigo-400 hover:underline flex items-center gap-1">
                         Query all 500K <ArrowRight size={10} />
                       </button>
@@ -607,20 +689,28 @@ export default function DatasetsPage() {
             )}
 
             {/* ── PREVIEW: HTTP dataset with stored sample rows ── */}
-            {tab === 'preview' && !selected.liveType && selected.sampleRows && selected.sampleRows.length > 0 && selected.schema && (
+            {tab === 'preview' && !selected.liveType && selectedSampleRows.length > 0 && selected.schema && (
               <div>
                 <div className="px-5 py-3 border-b border-chef-border flex items-center gap-2 text-[10px] text-chef-muted">
                   <Table size={11} />
                   <span>
-                    Showing {selected.sampleRows.length} sample rows · {selected.schema.length} fields · fetched server-side
+                    Showing {Math.min(visibleStoredRows, selectedSampleRows.length)} of {selectedSampleRows.length} loaded rows · {selected.schema.length} fields · fetched server-side
                   </span>
                   <span className="ml-auto flex items-center gap-1 text-emerald-400">
                     <CheckCircle2 size={11} /> Real data
                   </span>
                 </div>
-                <FlatSampleTable schema={selected.schema} rows={selected.sampleRows} />
-                <div className="px-5 py-3 text-[10px] text-chef-muted border-t border-chef-border">
-                  Showing {selected.sampleRows.length} of {selected.totalRows?.toLocaleString() ?? '?'} rows fetched from source.{' '}
+                <FlatSampleTable schema={selected.schema} rows={selectedSampleRows.slice(0, visibleStoredRows)} />
+                <div className="px-5 py-3 text-[10px] text-chef-muted border-t border-chef-border flex items-center gap-3">
+                  <span>Showing {Math.min(visibleStoredRows, selectedSampleRows.length)} of {selected.totalRows?.toLocaleString() ?? '?'} rows fetched from source.</span>
+                  {visibleStoredRows < selectedSampleRows.length && (
+                    <button
+                      onClick={() => setVisibleStoredRows(prev => Math.min(prev + DATASET_PREVIEW_PAGE_SIZE, selectedSampleRows.length))}
+                      className="text-indigo-400 hover:underline"
+                    >
+                      Load more
+                    </button>
+                  )}
                   <button onClick={handleRefresh} className="text-indigo-400 hover:underline">
                     Refresh from source →
                   </button>
@@ -629,7 +719,7 @@ export default function DatasetsPage() {
             )}
 
             {/* ── PREVIEW: no live data available ── */}
-            {tab === 'preview' && !selected.liveType && (!selected.sampleRows || selected.sampleRows.length === 0) && (
+            {tab === 'preview' && !selected.liveType && selectedSampleRows.length === 0 && (
               <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-8">
                 <div className="w-12 h-12 rounded-xl bg-chef-card border border-chef-border flex items-center justify-center">
                   <Table size={20} className="text-chef-muted" />
@@ -766,6 +856,24 @@ export default function DatasetsPage() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={showDeleteDialog && !!selected}
+        title={selected ? `Delete ${selected.name}?` : 'Delete dataset?'}
+        description="This removes the dataset from the workspace."
+        details={selected ? [
+          selected.connectorId ? 'The source connector will remain, but this dataset materialization will be deleted.' : 'This dataset will be deleted immediately.',
+          'Pipelines that read from or write to this dataset will also be deleted.',
+        ] : []}
+        confirmLabel="Delete dataset"
+        tone="danger"
+        busy={deleteBusy}
+        onCancel={() => {
+          if (deleteBusy) return
+          setShowDeleteDialog(false)
+        }}
+        onConfirm={() => void handleDeleteDataset()}
+      />
     </div>
   )
 }

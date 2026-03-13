@@ -61,9 +61,22 @@ export function deleteSavedQuery(connectorId: string, queryId: string): boolean 
   const existing = state.byConnectorId[connectorId]
   if (!existing) return false
   const next = existing.filter(query => query.id !== queryId)
-  state.byConnectorId[connectorId] = next
+  if (next.length === 0) {
+    delete state.byConnectorId[connectorId]
+  } else {
+    state.byConnectorId[connectorId] = next
+  }
   writeState(state)
   return next.length !== existing.length
+}
+
+export function deleteSavedQueriesForConnector(connectorId: string): number {
+  const state = readState()
+  const count = state.byConnectorId[connectorId]?.length ?? 0
+  if (count === 0) return 0
+  delete state.byConnectorId[connectorId]
+  writeState(state)
+  return count
 }
 
 export function seedDefaultQueries(

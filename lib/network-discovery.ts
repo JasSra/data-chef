@@ -517,6 +517,19 @@ export function markDiscoveryCandidateAdded(id: string, connectorId: string): Di
   return candidate
 }
 
+export function clearDiscoveryCandidateConnector(connectorId: string): number {
+  const state = readState()
+  let updated = 0
+  for (const candidate of state.candidates) {
+    if (candidate.connectorId !== connectorId) continue
+    candidate.connectorId = null
+    candidate.status = 'new'
+    updated++
+  }
+  if (updated > 0) writeState(state)
+  return updated
+}
+
 export function buildDiscoveryDraft(candidate: DiscoveryCandidate): DiscoveryConnectorDraft {
   const endpoint = candidate.type === 'sftp'
     ? `sftp://${candidate.host}:${candidate.port}`
