@@ -91,6 +91,13 @@ body {
   tab-size: 2;
 }
 
+/* Transparent selection on the textarea so the ::selection colour doesn't
+   bleed through the color:transparent trick and create ghost/double text */
+.query-editor-ta::selection {
+  color: transparent;
+  background: var(--selection-bg);
+}
+
 /* Syntax highlight */
 .kw  { color: #818cf8; }
 .fn  { color: #34d399; }

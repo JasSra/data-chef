@@ -13,16 +13,41 @@ import {
   ShieldCheck,
   Info,
   ExternalLink,
+  Compass,
+  type LucideIcon,
 } from 'lucide-react'
 import { useAppSettings } from '@/components/SettingsProvider'
 
-const navItems = [
-  { href: '/datasets',    icon: Database,  label: 'Datasets',    countKey: 'datasets' as const },
-  { href: '/query',       icon: Code2,     label: 'Query' },
-  { href: '/pipelines',   icon: GitBranch, label: 'Pipelines' },
-  { href: '/connections', icon: Plug2,     label: 'Connections', countKey: 'connections' as const },
-  { href: '/about',       icon: Info,      label: 'About' },
-  { href: '/settings',    icon: Settings,  label: 'Settings' },
+interface NavItem {
+  href: string; icon: LucideIcon; label: string
+  brandClass?: string; countKey?: 'datasets' | 'connections' | 'apiServices'
+}
+
+interface NavGroup { heading: string; items: NavItem[] }
+
+const navGroups: NavGroup[] = [
+  {
+    heading: 'Data',
+    items: [
+      { href: '/connections', icon: Plug2,     label: 'Connections', countKey: 'connections' },
+      { href: '/datasets',    icon: Database,  label: 'Datasets',    countKey: 'datasets' },
+      { href: '/query',       icon: Code2,     label: 'Query' },
+    ],
+  },
+  {
+    heading: 'Integrate',
+    items: [
+      { href: '/api-explorer', icon: Compass,  label: 'API Explorer', brandClass: 'fa-solid fa-plug-circle-bolt', countKey: 'apiServices' },
+      { href: '/pipelines',    icon: GitBranch, label: 'Pipelines' },
+    ],
+  },
+  {
+    heading: 'System',
+    items: [
+      { href: '/settings', icon: Settings, label: 'Settings' },
+      { href: '/about',    icon: Info,     label: 'About' },
+    ],
+  },
 ]
 
 interface WorkerState { active: number; total: number; pct: number }
@@ -35,7 +60,7 @@ interface AppInfoState {
 
 export default function Sidebar({ pathname }: { pathname: string }) {
   const [workers, setWorkers] = useState<WorkerState>({ active: 0, total: 5, pct: 0 })
-  const [counts, setCounts] = useState({ datasets: 0, connections: 0 })
+  const [counts, setCounts] = useState({ datasets: 0, connections: 0, apiServices: 0 })
   const [appInfo, setAppInfo] = useState<AppInfoState | null>(null)
   const { settings } = useAppSettings()
   const productName = settings?.branding.productName ?? appInfo?.name ?? 'dataChef'
@@ -69,18 +94,21 @@ export default function Sidebar({ pathname }: { pathname: string }) {
 
     async function loadCounts() {
       try {
-        const [datasetsRes, connectionsRes] = await Promise.all([
+        const [datasetsRes, connectionsRes, apiServicesRes] = await Promise.all([
           fetch('/api/datasets'),
           fetch('/api/connectors'),
+          fetch('/api/api-services'),
         ])
-        const [datasets, connections] = await Promise.all([
+        const [datasets, connections, apiServices] = await Promise.all([
           datasetsRes.ok ? datasetsRes.json() : [],
           connectionsRes.ok ? connectionsRes.json() : [],
+          apiServicesRes.ok ? apiServicesRes.json() : [],
         ])
         if (!cancelled) {
           setCounts({
             datasets: Array.isArray(datasets) ? datasets.length : 0,
             connections: Array.isArray(connections) ? connections.length : 0,
+            apiServices: Array.isArray(apiServices) ? apiServices.length : 0,
           })
         }
       } catch { /* ignore */ }
@@ -150,37 +178,45 @@ export default function Sidebar({ pathname }: { pathname: string }) {
 
       {/* Nav */}
       <nav className="flex-1 py-2 px-2 overflow-y-auto">
-        <div className="text-[10px] font-semibold text-chef-muted uppercase tracking-widest px-2 mb-1.5 mt-1">
-          Main
-        </div>
-        {navItems.map(({ href, icon: Icon, label, countKey }) => {
-          const isActive = pathname.startsWith(href)
-          const badge = countKey ? counts[countKey] : null
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={`group flex items-center gap-2.5 px-2.5 py-2 rounded-lg mb-0.5 text-sm transition-all duration-150 ${
-                isActive
-                  ? 'bg-indigo-500/10 text-indigo-400'
-                  : 'text-chef-muted hover:text-chef-text hover:bg-white/[0.04]'
-              }`}
-            >
-              <Icon
-                size={15}
-                className={`shrink-0 transition-colors ${isActive ? 'text-indigo-400' : 'text-chef-muted group-hover:text-chef-muted-bright'}`}
-              />
-              <span className="flex-1 font-medium">{label}</span>
-              {badge != null && (
-                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                  isActive ? 'bg-indigo-500/20 text-indigo-400' : 'bg-chef-border text-chef-muted'
-                }`}>
-                  {badge}
-                </span>
-              )}
-            </Link>
-          )
-        })}
+        {navGroups.map((group, gi) => (
+          <div key={group.heading}>
+            <div className={`text-[10px] font-semibold text-chef-muted uppercase tracking-widest px-2 mb-1.5 ${gi === 0 ? 'mt-1' : 'mt-3'}`}>
+              {group.heading}
+            </div>
+            {group.items.map(({ href, icon: Icon, brandClass, label, countKey }) => {
+              const isActive = pathname.startsWith(href)
+              const badge = countKey ? counts[countKey] : null
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`group flex items-center gap-2.5 px-2.5 py-2 rounded-lg mb-0.5 text-sm transition-all duration-150 ${
+                    isActive
+                      ? 'bg-indigo-500/10 text-indigo-400'
+                      : 'text-chef-muted hover:text-chef-text hover:bg-white/[0.04]'
+                  }`}
+                >
+                  {brandClass ? (
+                    <i className={`${brandClass} shrink-0 transition-colors ${isActive ? 'text-indigo-400' : 'text-chef-muted group-hover:text-chef-muted-bright'}`} style={{ fontSize: '14px', width: '15px', textAlign: 'center' }} />
+                  ) : (
+                    <Icon
+                      size={15}
+                      className={`shrink-0 transition-colors ${isActive ? 'text-indigo-400' : 'text-chef-muted group-hover:text-chef-muted-bright'}`}
+                    />
+                  )}
+                  <span className="flex-1 font-medium">{label}</span>
+                  {badge != null && (
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                      isActive ? 'bg-indigo-500/20 text-indigo-400' : 'bg-chef-border text-chef-muted'
+                    }`}>
+                      {badge}
+                    </span>
+                  )}
+                </Link>
+              )
+            })}
+          </div>
+        ))}
 
         {/* Worker capacity widget */}
         <div className="text-[10px] font-semibold text-chef-muted uppercase tracking-widest px-2 mb-1.5 mt-4">
