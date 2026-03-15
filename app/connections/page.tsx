@@ -7,7 +7,7 @@ import {
   Zap, Lock, ExternalLink, Terminal, Activity,
   Play, X, Loader2, AlertCircle, HardDrive,
   RefreshCw, ChevronRight, Copy, FileText, BarChart2, Users, Radar, EyeOff, Undo2,
-  Download, Upload,
+  Download, Upload, Rss, Radio,
 } from 'lucide-react'
 import StatusBadge from '@/components/StatusBadge'
 import ConnectorWizard, { ConnectorJob, NewConnector, ConnectorId, DiscoveryConnectorDraft } from '@/components/ConnectorWizard'
@@ -66,6 +66,8 @@ const TYPE_CFG: Record<ConnectorId, { Icon?: React.ElementType; brandClass?: str
   mssql:      { Icon: Database,  color: 'text-sky-300',    bg: 'bg-sky-500/10',     border: 'border-sky-500/20',    label: 'SQL Server' },
   rabbitmq:   { Icon: Zap,       color: 'text-orange-300', bg: 'bg-orange-500/10',  border: 'border-orange-500/20', label: 'RabbitMQ' },
   mqtt:       { Icon: Zap,       color: 'text-emerald-300', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', label: 'MQTT' },
+  rss:        { Icon: Rss,       color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20', label: 'RSS Feed' },
+  websocket:  { Icon: Radio,     color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/10', border: 'border-fuchsia-500/20', label: 'WebSocket' },
   bigquery:   { brandClass: 'fa-brands fa-google', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20', label: 'BigQuery' },
   file:       { Icon: FileText,  color: 'text-lime-400',    bg: 'bg-lime-500/10',    border: 'border-lime-500/20',    label: 'File Upload' },
   appinsights:{ brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', label: 'App Insights' },
@@ -118,7 +120,7 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 
 const SPARK_COLORS: Record<ConnectorId, string> = {
   http: '#38bdf8', github: '#d4d4d8', azuredevops: '#67e8f9', webhook: '#fbbf24', s3: '#a78bfa', sftp: '#94a3b8',
-  postgresql: '#60a5fa', mysql: '#fb923c', mongodb: '#34d399', redis: '#f87171', mssql: '#7dd3fc', rabbitmq: '#fdba74', mqtt: '#6ee7b7', bigquery: '#fb7185',
+  postgresql: '#60a5fa', mysql: '#fb923c', mongodb: '#34d399', redis: '#f87171', mssql: '#7dd3fc', rabbitmq: '#fdba74', mqtt: '#6ee7b7', rss: '#fb923c', websocket: '#e879f9', bigquery: '#fb7185',
   file:        '#a3e635',
   appinsights: '#22d3ee',
   azuremonitor:'#67e8f9',

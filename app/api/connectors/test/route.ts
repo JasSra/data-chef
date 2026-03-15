@@ -784,6 +784,76 @@ export async function POST(req: NextRequest) {
             return
           }
 
+        } else if (connectorType === 'rss') {
+          const feedUrl = String(body.url || '')
+          let hostname = feedUrl
+          try { hostname = new URL(feedUrl).hostname } catch {}
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Fetching RSS feed from ${hostname}…` }))
+          await sleep(120)
+          try {
+            const { probeRssFeed } = await import('@/lib/rss')
+            const customHeaders: Record<string, string> = {}
+            const headerText = String(body.customHeaders ?? '')
+            for (const line of headerText.split('\n')) {
+              const idx = line.indexOf(':')
+              if (idx > 0) { const k = line.slice(0, idx).trim(); const v = line.slice(idx + 1).trim(); if (k && v) customHeaders[k] = v }
+            }
+            const probe = await probeRssFeed(feedUrl, {
+              auth: String(body.auth ?? 'none') as 'none' | undefined,
+              bearerToken: String(body.bearerToken ?? ''),
+              apiKeyHeader: String(body.apiKeyHeader ?? ''),
+              apiKeyValue: String(body.apiKeyValue ?? ''),
+              basicUser: String(body.basicUser ?? ''),
+              basicPass: String(body.basicPass ?? ''),
+            }, customHeaders)
+            if (!probe.ok) throw new Error(probe.error ?? 'Feed probe failed')
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `Feed "${probe.feedTitle}" · ${probe.itemCount} items · format: ${probe.feedType}` }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
+        } else if (connectorType === 'websocket') {
+          const wsUrl = String(body.url || '')
+          let hostname = wsUrl
+          try { hostname = new URL(wsUrl).hostname } catch {}
+          controller.enqueue(sse({ type: 'log', level: 'info', msg: `Opening WebSocket to ${hostname}…` }))
+          await sleep(120)
+          try {
+            const { probeWsFeed } = await import('@/lib/websocket-feed')
+            const customHeaders: Record<string, string> = {}
+            const headerText = String(body.customHeaders ?? '')
+            for (const line of headerText.split('\n')) {
+              const idx = line.indexOf(':')
+              if (idx > 0) { const k = line.slice(0, idx).trim(); const v = line.slice(idx + 1).trim(); if (k && v) customHeaders[k] = v }
+            }
+            const probe = await probeWsFeed({
+              url: wsUrl,
+              auth: String(body.auth ?? 'none') as 'none',
+              bearerToken: String(body.bearerToken ?? ''),
+              apiKeyHeader: String(body.apiKeyHeader ?? ''),
+              apiKeyValue: String(body.apiKeyValue ?? ''),
+              basicUser: String(body.basicUser ?? ''),
+              basicPass: String(body.basicPass ?? ''),
+              customHeaders,
+              subscribeMessage: String(body.subscribeMessage ?? ''),
+              windowMs: Number(body.windowMs ?? 8000),
+            })
+            if (!probe.ok) throw new Error(probe.error ?? 'WebSocket probe failed')
+            controller.enqueue(sse({ type: 'log', level: 'success', msg: `WebSocket connected · ${probe.latencyMs}ms · first message: ${probe.firstMessageType ?? 'none'}` }))
+            controller.enqueue(sse({ type: 'done', ok: true, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            controller.enqueue(sse({ type: 'log', level: 'error', msg }))
+            controller.enqueue(sse({ type: 'done', ok: false, latencyMs: Math.round(performance.now() - t0) }))
+            return
+          }
+
         } else if (['postgresql', 'mysql', 'mongodb', 's3', 'sftp', 'bigquery'].includes(connectorType)) {
           controller.enqueue(sse({ type: 'log', level: 'info', msg: `Starting live ${connectorType} probe` }))
           await sleep(120)

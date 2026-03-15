@@ -21,6 +21,8 @@ import { sampleRedisRowsFromConfig } from '@/lib/redis'
 import { sampleMssqlRowsFromConfig, executeMssqlQuery } from '@/lib/mssql'
 import { browseRabbitQueue } from '@/lib/rabbitmq'
 import { subscribeMqttTopic } from '@/lib/mqtt'
+import { fetchRssFeed, feedItemsToRows } from '@/lib/rss'
+import { collectWsFeed, wsMessagesToRows, type WsFeedConfig } from '@/lib/websocket-feed'
 import type { SourceReference, SourceType } from '@/lib/datasets'
 
 export type RuntimeRow = Record<string, unknown>
@@ -48,7 +50,7 @@ export interface RuntimeTableQueryResult extends RuntimeQueryResult {
 }
 
 type SupportedRuntimeConnector =
-  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'redis' | 'mssql' | 'rabbitmq' | 'mqtt' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
+  'http' | 'postgresql' | 'mysql' | 'mongodb' | 's3' | 'sftp' | 'bigquery' | 'redis' | 'mssql' | 'rabbitmq' | 'mqtt' | 'rss' | 'websocket' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
 
 export function inferType(value: unknown): string {
   if (value === null || value === undefined) return 'null'
@@ -133,6 +135,18 @@ export function inferSchema(records: RuntimeRow[], sample = 200): SchemaField[] 
       example: formatExample(examples.get(field)),
     }
   })
+}
+
+function parseCustomHeaders(text: string): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const line of text.split('\n')) {
+    const idx = line.indexOf(':')
+    if (idx <= 0) continue
+    const key = line.slice(0, idx).trim()
+    const value = line.slice(idx + 1).trim()
+    if (key && value) headers[key] = value
+  }
+  return headers
 }
 
 export function buildAuthHeaders(auth: HttpAuthOptions, userAgent: string): Record<string, string> {
@@ -316,6 +330,41 @@ export async function sampleRowsFromRuntimeConfig(
       const res = await subscribeMqttTopic(config, { topic: options.resource || String(config.defaultTopic ?? '#'), limit: rowLimit })
       return res.rows.map(row => Object.fromEntries(res.columns.map((col, i) => [col, row[i]])))
     }
+    case 'rss': {
+      const customHeaders = parseCustomHeaders(String(config.customHeaders ?? ''))
+      const result = await fetchRssFeed(
+        String(config.url ?? ''),
+        {
+          auth: String(config.auth ?? 'none') as 'none' | 'bearer' | 'apikey' | 'basic' | undefined,
+          bearerToken: String(config.bearerToken ?? ''),
+          apiKeyHeader: String(config.apiKeyHeader ?? ''),
+          apiKeyValue: String(config.apiKeyValue ?? ''),
+          basicUser: String(config.basicUser ?? ''),
+          basicPass: String(config.basicPass ?? ''),
+        },
+        { rowLimit, customHeaders },
+      )
+      if (result.error) throw new Error(result.error)
+      return feedItemsToRows(result.items).slice(0, rowLimit)
+    }
+    case 'websocket': {
+      const customHeaders = parseCustomHeaders(String(config.customHeaders ?? ''))
+      const wsCfg: WsFeedConfig = {
+        url: String(config.url ?? ''),
+        auth: (String(config.auth ?? 'none')) as WsFeedConfig['auth'],
+        bearerToken: String(config.bearerToken ?? ''),
+        apiKeyHeader: String(config.apiKeyHeader ?? ''),
+        apiKeyValue: String(config.apiKeyValue ?? ''),
+        basicUser: String(config.basicUser ?? ''),
+        basicPass: String(config.basicPass ?? ''),
+        customHeaders,
+        subscribeMessage: String(config.subscribeMessage ?? ''),
+        windowMs: Number(config.windowMs ?? 5000),
+      }
+      const result = await collectWsFeed(wsCfg, { limit: rowLimit })
+      if (result.error && !result.connected) throw new Error(result.error)
+      return wsMessagesToRows(result.messages).slice(0, rowLimit)
+    }
     case 'appinsights': {
       const connectorId = String(config.connectorId ?? '')
       if (!connectorId) throw new Error('App Insights connectorId is required')
@@ -442,6 +491,14 @@ export async function loadRowsFromConnector(
   if (connector.type === 'mqtt') {
     const res = await subscribeMqttTopic(config, { topic: options.resource || String(config.defaultTopic ?? '#'), limit: options.rowLimit ?? 100 })
     return res.rows.map(row => Object.fromEntries(res.columns.map((col, i) => [col, row[i]])))
+  }
+
+  if (connector.type === 'rss') {
+    return sampleRowsFromRuntimeConfig('rss', config, options)
+  }
+
+  if (connector.type === 'websocket') {
+    return sampleRowsFromRuntimeConfig('websocket', config, options)
   }
 
   if (connector.type === 'azureentraid') {
