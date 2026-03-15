@@ -5,12 +5,12 @@ import {
   X, Globe, Database, Cloud, Server, Webhook as WebhookIcon,
   ArrowLeft, ChevronRight, CheckCircle2, Loader2, AlertCircle,
   Clock, Copy, Eye, EyeOff, Terminal, Zap, Key, HardDrive,
-  AlertTriangle, Shield, Upload, FileText, BarChart2, Users,
+  AlertTriangle, Shield, Upload, FileText, BarChart2, Users, Rss, Radio,
 } from 'lucide-react'
 import BrandIcon from '@/components/BrandIcon'
 
 /* ── Connector catalog ───────────────────────────────────────────── */
-export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 'mssql' | 'rabbitmq' | 'mqtt' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
+export type ConnectorId = 'http' | 'webhook' | 'postgresql' | 'mysql' | 'mongodb' | 'redis' | 'mssql' | 'rabbitmq' | 'mqtt' | 'rss' | 'websocket' | 's3' | 'sftp' | 'bigquery' | 'file' | 'appinsights' | 'azuremonitor' | 'elasticsearch' | 'datadog' | 'azureb2c' | 'azureentraid' | 'github' | 'azuredevops'
 
 interface ConnectorDef {
   id: ConnectorId; label: string; desc: string; Icon?: React.ElementType
@@ -31,6 +31,8 @@ const CONNECTORS: ConnectorDef[] = [
   { id: 'mssql',     label: 'SQL Server / Azure SQL', desc: 'Tables, views, stored procedures, full SQL browser', Icon: Database, color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/30', category: 'Database', badge: 'Microsoft' },
   { id: 'rabbitmq',  label: 'RabbitMQ',         desc: 'Browse queues, exchanges, and messages via management API', Icon: Zap, color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'Database', badge: 'Queue' },
   { id: 'mqtt',      label: 'MQTT',             desc: 'Subscribe to topics, browse retained messages', Icon: Zap, color: 'text-emerald-300', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', category: 'Database', badge: 'IoT' },
+  { id: 'rss',       label: 'RSS / Atom Feed',  desc: 'Subscribe to RSS/Atom feeds with delta sync', Icon: Rss, color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'API', badge: 'Feed' },
+  { id: 'websocket', label: 'WebSocket',        desc: 'Live streaming data from WS/WSS endpoints', Icon: Radio, color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/10', border: 'border-fuchsia-500/30', category: 'API', badge: 'Live' },
   { id: 's3',         label: 'S3 / R2 / GCS',   desc: 'Object storage, JSON/CSV/Parquet',      Icon: Cloud,         color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/30',  category: 'Storage' },
   { id: 'sftp',       label: 'SFTP / FTP',       desc: 'Secure file transfer, remote exports',  Icon: Server,        color: 'text-slate-400',   bg: 'bg-slate-500/10',   border: 'border-slate-500/30',   category: 'Storage' },
   { id: 'bigquery',   label: 'BigQuery',         desc: 'Google BigQuery tables and SQL',        brandClass: 'fa-brands fa-google', color: 'text-rose-400',    bg: 'bg-rose-500/10',    border: 'border-rose-500/30',    category: 'Warehouse', badge: 'GCP' },
@@ -206,6 +208,28 @@ interface MqttForm {
   defaultTopic: string
   schedule: string
 }
+interface RssForm {
+  name: string; description: string
+  url: string
+  auth: 'none' | 'bearer' | 'apikey' | 'basic'
+  bearerToken: string
+  apiKeyHeader: string; apiKeyValue: string
+  basicUser: string; basicPass: string
+  customHeaders: string   // key:value pairs, one per line
+  schedule: string
+}
+interface WebSocketForm {
+  name: string; description: string
+  url: string
+  auth: 'none' | 'bearer' | 'apikey' | 'basic'
+  bearerToken: string
+  apiKeyHeader: string; apiKeyValue: string
+  basicUser: string; basicPass: string
+  customHeaders: string
+  subscribeMessage: string
+  windowMs: string
+  schedule: string
+}
 interface FileForm {
   name: string; description: string
   file: File | null; fileName: string; fileSize: number
@@ -348,7 +372,7 @@ interface AzureDevOpsForm {
   pipelineRunDays: string
   schedule: string
 }
-type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | RedisForm | MssqlForm | RabbitMQForm | MqttForm | FileForm | AppInsightsForm | AzureMonitorForm | ElasticObservabilityForm | DatadogForm | AzureB2CForm | AzureEntraIdForm | GitHubForm | AzureDevOpsForm
+type AnyForm = HttpForm | WebhookForm | DatabaseForm | S3Form | SftpForm | BigQueryForm | RedisForm | MssqlForm | RabbitMQForm | MqttForm | RssForm | WebSocketForm | FileForm | AppInsightsForm | AzureMonitorForm | ElasticObservabilityForm | DatadogForm | AzureB2CForm | AzureEntraIdForm | GitHubForm | AzureDevOpsForm
 
 /* ── Validation ──────────────────────────────────────────────────── */
 type FieldErrors = Record<string, string | undefined>
@@ -472,6 +496,33 @@ function validateMqtt(f: MqttForm): FieldErrors {
     if (!f.host.trim()) e.host = 'Host is required'
     if (!f.port || isNaN(Number(f.port))) e.port = 'Valid port required'
   }
+  return e
+}
+function validateRss(f: RssForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!f.url.trim()) e.url = 'Feed URL is required'
+  else {
+    try { new URL(f.url) } catch { e.url = 'Must be a valid URL' }
+  }
+  if (f.auth === 'bearer' && !f.bearerToken.trim()) e.bearerToken = 'Token required'
+  if (f.auth === 'apikey' && !f.apiKeyValue.trim()) e.apiKeyValue = 'API key required'
+  if (f.auth === 'basic' && !f.basicUser.trim()) e.basicUser = 'Username required'
+  return e
+}
+function validateWebSocket(f: WebSocketForm): FieldErrors {
+  const e: FieldErrors = {}
+  if (!f.name.trim()) e.name = 'Name is required'
+  if (!f.url.trim()) e.url = 'WebSocket URL is required'
+  else {
+    try {
+      const u = new URL(f.url)
+      if (!['ws:', 'wss:'].includes(u.protocol)) e.url = 'URL must start with ws:// or wss://'
+    } catch { e.url = 'Must be a valid URL' }
+  }
+  if (f.auth === 'bearer' && !f.bearerToken.trim()) e.bearerToken = 'Token required'
+  if (f.auth === 'apikey' && !f.apiKeyValue.trim()) e.apiKeyValue = 'API key required'
+  if (f.auth === 'basic' && !f.basicUser.trim()) e.basicUser = 'Username required'
   return e
 }
 function validateFile(f: FileForm): FieldErrors {
@@ -763,6 +814,32 @@ function getTestLogs(type: ConnectorId, form: Record<string, unknown>): LogEntry
         { level: 'success', msg: 'MQTT broker reachable · topic browser ready',            delay: 500 },
       ]
     }
+    case 'rss': {
+      const feedUrl = String(form.url || 'https://example.com/feed')
+      let hostname = feedUrl
+      try { hostname = new URL(feedUrl).hostname } catch {}
+      return [
+        { level: 'info',    msg: `Fetching feed from ${hostname}`,                         delay: 400 },
+        { level: 'info',    msg: 'Parsing XML response…',                                  delay: 500 },
+        { level: 'info',    msg: 'Detecting feed format (RSS 2.0 / Atom / RDF)',           delay: 300 },
+        { level: 'info',    msg: 'Extracting items and metadata',                           delay: 400 },
+        { level: 'info',    msg: 'Validating item GUIDs for delta tracking',               delay: 300 },
+        { level: 'success', msg: 'RSS feed reachable · items discovered',                   delay: 400 },
+      ]
+    }
+    case 'websocket': {
+      const wsUrl = String(form.url || 'wss://example.com/ws')
+      let hostname = wsUrl
+      try { hostname = new URL(wsUrl).hostname } catch {}
+      return [
+        { level: 'info',    msg: `Opening WebSocket to ${hostname}`,                       delay: 400 },
+        { level: 'info',    msg: 'WebSocket handshake completed',                           delay: 600 },
+        { level: 'info',    msg: form.subscribeMessage ? 'Sending subscribe message…' : 'Listening for messages…', delay: 400 },
+        { level: 'info',    msg: 'Collecting sample messages (5s window)',                  delay: 600 },
+        { level: 'info',    msg: 'Detecting message format (JSON / text / binary)',        delay: 400 },
+        { level: 'success', msg: 'WebSocket connected · live feed ready',                   delay: 500 },
+      ]
+    }
     default:
       return []
   }
@@ -823,6 +900,17 @@ const INIT_MQTT: MqttForm = {
   name: '', description: '', connectionMode: 'fields', connectionString: '',
   host: '', port: '1883', username: '', password: '', tls: false, protocol: 'mqtt',
   defaultTopic: '#', schedule: 'on-demand',
+}
+const INIT_RSS: RssForm = {
+  name: '', description: '', url: '',
+  auth: 'none', bearerToken: '', apiKeyHeader: 'X-API-Key', apiKeyValue: '',
+  basicUser: '', basicPass: '', customHeaders: '', schedule: '1h',
+}
+const INIT_WEBSOCKET: WebSocketForm = {
+  name: '', description: '', url: '',
+  auth: 'none', bearerToken: '', apiKeyHeader: 'X-API-Key', apiKeyValue: '',
+  basicUser: '', basicPass: '', customHeaders: '', subscribeMessage: '',
+  windowMs: '5000', schedule: '1h',
 }
 const INIT_AI: AppInsightsForm = {
   name: '', description: '', authMode: 'api_key', mode: 'workspace', connectionString: '', appId: '', apiKey: '', workspaceId: '', tenantId: '', clientId: '', clientSecret: '',
@@ -1643,6 +1731,129 @@ function MqttConfigure({ form, set, errors }: { form: MqttForm; set: (f: MqttFor
       <FieldRow label="Default Topic Filter">
         <FInput value={form.defaultTopic} onChange={v => f('defaultTopic', v)} placeholder="# (all topics), sensors/+/temperature" />
       </FieldRow>
+      <Divider label="Schedule" />
+      <FieldRow label="Sync Interval"><ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} /></FieldRow>
+    </div>
+  )
+}
+
+/* ── RSS Feed Configure step ───────────────────────────────────────── */
+function RssConfigure({ form, set, errors }: { form: RssForm; set: (f: RssForm) => void; errors: FieldErrors }) {
+  const f = <K extends keyof RssForm>(k: K, v: RssForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => f('name', v)} placeholder="e.g. Tech News Feed" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="Feed URL" error={errors.url}>
+        <FInput value={form.url} onChange={v => f('url', v)} placeholder="https://example.com/feed.xml" error={errors.url} />
+      </FieldRow>
+      <p className="text-xs text-chef-muted">RSS 2.0, Atom, RDF/RSS 1.0, and JSON Feed are all supported. Broken feeds are handled gracefully.</p>
+      <Divider label="Authentication" />
+      <FieldRow label="Auth Method">
+        <FSelect value={form.auth} onChange={v => f('auth', v as RssForm['auth'])}>
+          <option value="none">None (public feed)</option>
+          <option value="bearer">Bearer token</option>
+          <option value="apikey">API key header</option>
+          <option value="basic">Basic auth</option>
+        </FSelect>
+      </FieldRow>
+      {form.auth === 'bearer' && (
+        <FieldRow label="Bearer Token" error={errors.bearerToken}>
+          <FInput type="password" value={form.bearerToken} onChange={v => f('bearerToken', v)} placeholder="token" error={errors.bearerToken} />
+        </FieldRow>
+      )}
+      {form.auth === 'apikey' && (
+        <div className="grid grid-cols-2 gap-3">
+          <FieldRow label="Header Name">
+            <FInput value={form.apiKeyHeader} onChange={v => f('apiKeyHeader', v)} placeholder="X-API-Key" />
+          </FieldRow>
+          <FieldRow label="Header Value" error={errors.apiKeyValue}>
+            <FInput type="password" value={form.apiKeyValue} onChange={v => f('apiKeyValue', v)} placeholder="secret" error={errors.apiKeyValue} />
+          </FieldRow>
+        </div>
+      )}
+      {form.auth === 'basic' && (
+        <div className="grid grid-cols-2 gap-3">
+          <FieldRow label="Username" error={errors.basicUser}>
+            <FInput value={form.basicUser} onChange={v => f('basicUser', v)} placeholder="user" error={errors.basicUser} />
+          </FieldRow>
+          <FieldRow label="Password">
+            <FInput type="password" value={form.basicPass} onChange={v => f('basicPass', v)} placeholder="pass" />
+          </FieldRow>
+        </div>
+      )}
+      <Divider label="Custom Headers" />
+      <FieldRow label="Extra Headers">
+        <FTextarea value={form.customHeaders} onChange={v => f('customHeaders', v)} placeholder="X-Custom: value&#10;Accept-Language: en" rows={3} />
+      </FieldRow>
+      <p className="text-xs text-chef-muted">One header per line as Key: Value. Useful for feeds behind CDNs or requiring cookies.</p>
+      <Divider label="Schedule" />
+      <FieldRow label="Sync Interval"><ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} /></FieldRow>
+      <p className="text-xs text-chef-muted">Delta sync: only new items (by GUID) are appended on each run.</p>
+    </div>
+  )
+}
+
+/* ── WebSocket Configure step ──────────────────────────────────────── */
+function WebSocketConfigure({ form, set, errors }: { form: WebSocketForm; set: (f: WebSocketForm) => void; errors: FieldErrors }) {
+  const f = <K extends keyof WebSocketForm>(k: K, v: WebSocketForm[K]) => set({ ...form, [k]: v })
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <FieldRow label="Connector Name" error={errors.name}>
+        <FInput value={form.name} onChange={v => f('name', v)} placeholder="e.g. Market Data Stream" error={errors.name} />
+      </FieldRow>
+      <FieldRow label="WebSocket URL" error={errors.url}>
+        <FInput value={form.url} onChange={v => f('url', v)} placeholder="wss://stream.example.com/ws" error={errors.url} />
+      </FieldRow>
+      <Divider label="Authentication" />
+      <FieldRow label="Auth Method">
+        <FSelect value={form.auth} onChange={v => f('auth', v as WebSocketForm['auth'])}>
+          <option value="none">None</option>
+          <option value="bearer">Bearer token (via header)</option>
+          <option value="apikey">API key header</option>
+          <option value="basic">Basic auth (via header)</option>
+        </FSelect>
+      </FieldRow>
+      {form.auth === 'bearer' && (
+        <FieldRow label="Bearer Token" error={errors.bearerToken}>
+          <FInput type="password" value={form.bearerToken} onChange={v => f('bearerToken', v)} placeholder="token" error={errors.bearerToken} />
+        </FieldRow>
+      )}
+      {form.auth === 'apikey' && (
+        <div className="grid grid-cols-2 gap-3">
+          <FieldRow label="Header Name">
+            <FInput value={form.apiKeyHeader} onChange={v => f('apiKeyHeader', v)} placeholder="X-API-Key" />
+          </FieldRow>
+          <FieldRow label="Header Value" error={errors.apiKeyValue}>
+            <FInput type="password" value={form.apiKeyValue} onChange={v => f('apiKeyValue', v)} placeholder="secret" error={errors.apiKeyValue} />
+          </FieldRow>
+        </div>
+      )}
+      {form.auth === 'basic' && (
+        <div className="grid grid-cols-2 gap-3">
+          <FieldRow label="Username" error={errors.basicUser}>
+            <FInput value={form.basicUser} onChange={v => f('basicUser', v)} placeholder="user" error={errors.basicUser} />
+          </FieldRow>
+          <FieldRow label="Password">
+            <FInput type="password" value={form.basicPass} onChange={v => f('basicPass', v)} placeholder="pass" />
+          </FieldRow>
+        </div>
+      )}
+      <Divider label="Custom Headers" />
+      <FieldRow label="Extra Headers">
+        <FTextarea value={form.customHeaders} onChange={v => f('customHeaders', v)} placeholder="X-Custom: value&#10;Authorization: Bearer xyz" rows={3} />
+      </FieldRow>
+      <Divider label="Subscribe Message" />
+      <FieldRow label="On-Connect Message">
+        <FTextarea value={form.subscribeMessage} onChange={v => f('subscribeMessage', v)} placeholder='{"action":"subscribe","channel":"trades"}' rows={3} />
+      </FieldRow>
+      <p className="text-xs text-chef-muted">JSON message sent immediately after connecting. Use this to subscribe to channels or authenticate.</p>
+      <Divider label="Collection" />
+      <FieldRow label="Collection Window (ms)">
+        <FInput value={form.windowMs} onChange={v => f('windowMs', v)} placeholder="5000" />
+      </FieldRow>
+      <p className="text-xs text-chef-muted">How long to listen for messages per sync (1000–30000ms). Messages are appended with delta tracking.</p>
       <Divider label="Schedule" />
       <FieldRow label="Sync Interval"><ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} /></FieldRow>
     </div>
@@ -3284,6 +3495,8 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
   const [mssqlForm, setMssqlForm]     = useState<MssqlForm>(INIT_MSSQL)
   const [rabbitForm, setRabbitForm]   = useState<RabbitMQForm>(INIT_RABBIT)
   const [mqttForm, setMqttForm]       = useState<MqttForm>(INIT_MQTT)
+  const [rssForm, setRssForm]         = useState<RssForm>(INIT_RSS)
+  const [wsForm, setWsForm]           = useState<WebSocketForm>(INIT_WEBSOCKET)
   const [fileForm, setFileForm]       = useState<FileForm>({ name: '', description: '', file: null, fileName: '', fileSize: 0, format: '', parsedRows: [], detectedCols: [], parseError: '' })
   const [aiForm, setAiForm]           = useState<AppInsightsForm>(INIT_AI)
   const [azureMonitorForm, setAzureMonitorForm] = useState<AzureMonitorForm>(INIT_AZURE_MONITOR)
@@ -3547,6 +3760,8 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
       case 'mssql': return mssqlForm
       case 'rabbitmq': return rabbitForm
       case 'mqtt': return mqttForm
+      case 'rss': return rssForm
+      case 'websocket': return wsForm
       case 's3': return s3Form
       case 'sftp': return sftpForm
       case 'bigquery': return bqForm
@@ -3573,6 +3788,8 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
       case 'mssql': return validateMssql(mssqlForm)
       case 'rabbitmq': return validateRabbitMQ(rabbitForm)
       case 'mqtt': return validateMqtt(mqttForm)
+      case 'rss': return validateRss(rssForm)
+      case 'websocket': return validateWebSocket(wsForm)
       case 's3': return validateS3(s3Form)
       case 'sftp': return validateSftp(sftpForm)
       case 'bigquery': return validateBigQuery(bqForm)
@@ -3675,6 +3892,10 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         ? mqttForm.connectionMode === 'connectionString'
           ? mqttForm.connectionString
           : `${mqttForm.protocol || 'mqtt'}://${mqttForm.host}:${mqttForm.port || 1883}`
+        : type === 'rss'
+        ? rssForm.url
+        : type === 'websocket'
+        ? wsForm.url
         : type === 'appinsights'
         ? aiForm.authMode === 'api_key'
           ? `api.applicationinsights.io/v1/apps/${resolvedAiAppId.slice(0, 8)}…`
@@ -3702,6 +3923,8 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
         type === 'mssql'      ? (mssqlForm.encrypt ? 'TLS + password' : 'password') :
         type === 'rabbitmq'   ? 'username/password' :
         type === 'mqtt'       ? (mqttForm.username ? 'username/password' : 'anonymous') :
+        type === 'rss'        ? (rssForm.auth === 'none' ? 'None (public)' : rssForm.auth) :
+        type === 'websocket'  ? (wsForm.auth === 'none' ? 'None' : wsForm.auth) :
         type === 'appinsights'? (aiForm.authMode === 'api_key' ? 'App Insights API key' : 'OAuth2 client_credentials') :
         type === 'azuremonitor' ? 'OAuth2 client_credentials' :
         type === 'elasticsearch' ? (elasticForm.authType === 'apikey' ? 'API key' : 'Basic auth') :
@@ -3729,6 +3952,10 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
           ? `RabbitMQ · vhost: ${rabbitForm.vhost || '/'} · default: ${rabbitForm.defaultCatalog}`
         : type === 'mqtt'
           ? `MQTT · topic: ${mqttForm.defaultTopic || '#'}`
+        : type === 'rss'
+          ? `RSS feed · delta sync`
+        : type === 'websocket'
+          ? `WebSocket live feed · ${wsForm.windowMs || 5000}ms window`
         : type === 'appinsights'
           ? aiForm.authMode === 'api_key'
             ? `App Insights API key · app: ${resolvedAiAppId.slice(0, 8)}…`
@@ -3806,6 +4033,32 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
             protocol: mqttForm.protocol || 'mqtt',
             defaultTopic: mqttForm.defaultTopic || '#',
             schedule: mqttForm.schedule,
+          }
+        : type === 'rss'
+        ? {
+            url: rssForm.url,
+            auth: rssForm.auth,
+            bearerToken: rssForm.bearerToken,
+            apiKeyHeader: rssForm.apiKeyHeader,
+            apiKeyValue: rssForm.apiKeyValue,
+            basicUser: rssForm.basicUser,
+            basicPass: rssForm.basicPass,
+            customHeaders: rssForm.customHeaders,
+            schedule: rssForm.schedule,
+          }
+        : type === 'websocket'
+        ? {
+            url: wsForm.url,
+            auth: wsForm.auth,
+            bearerToken: wsForm.bearerToken,
+            apiKeyHeader: wsForm.apiKeyHeader,
+            apiKeyValue: wsForm.apiKeyValue,
+            basicUser: wsForm.basicUser,
+            basicPass: wsForm.basicPass,
+            customHeaders: wsForm.customHeaders,
+            subscribeMessage: wsForm.subscribeMessage,
+            windowMs: Number(wsForm.windowMs || 5000),
+            schedule: wsForm.schedule,
           }
         : type === 'azureb2c'
         ? {
@@ -4004,6 +4257,8 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
           {step === 1 && type === 'mssql' && <MssqlConfigure form={mssqlForm} set={setMssqlForm} errors={errors} />}
           {step === 1 && type === 'rabbitmq' && <RabbitMQConfigure form={rabbitForm} set={setRabbitForm} errors={errors} />}
           {step === 1 && type === 'mqtt' && <MqttConfigure form={mqttForm} set={setMqttForm} errors={errors} />}
+          {step === 1 && type === 'rss' && <RssConfigure form={rssForm} set={setRssForm} errors={errors} />}
+          {step === 1 && type === 'websocket' && <WebSocketConfigure form={wsForm} set={setWsForm} errors={errors} />}
           {step === 1 && type === 's3' && <S3Configure form={s3Form} set={setS3Form} errors={errors} />}
           {step === 1 && type === 'sftp' && <SftpConfigure form={sftpForm} set={setSftpForm} errors={errors} />}
           {step === 1 && type === 'bigquery' && <BigQueryConfigure form={bqForm} set={setBqForm} errors={errors} />}
