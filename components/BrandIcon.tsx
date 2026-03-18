@@ -11,7 +11,19 @@ interface BrandIconProps {
 
 export default function BrandIcon({ icon: Icon, brandClass, size = 16, className = '' }: BrandIconProps) {
   if (brandClass) {
-    return <i className={`${brandClass} ${className}`.trim()} style={{ fontSize: `${size}px`, lineHeight: 1 }} aria-hidden="true" />
+    // Check if className is a hex color (starts with #) or a Tailwind class
+    const isHexColor = className.startsWith('#')
+    const style = isHexColor 
+      ? { fontSize: `${size}px`, lineHeight: 1, color: className }
+      : { fontSize: `${size}px`, lineHeight: 1 }
+    
+    return (
+      <i 
+        className={`${brandClass} ${isHexColor ? '' : className}`.trim()} 
+        style={style} 
+        aria-hidden="true" 
+      />
+    )
   }
   if (!Icon) return null
   return <Icon size={size} className={className} />

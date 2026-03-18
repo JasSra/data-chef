@@ -5,7 +5,7 @@ import {
   X, Globe, Database, Cloud, Server, Webhook as WebhookIcon,
   ArrowLeft, ChevronRight, CheckCircle2, Loader2, AlertCircle,
   Clock, Copy, Eye, EyeOff, Terminal, Zap, Key, HardDrive,
-  AlertTriangle, Shield, Upload, FileText, BarChart2, Users, Rss, Radio,
+  AlertTriangle, Shield, Upload, FileText, FileJson, BarChart2, Users, Rss, Radio, RefreshCw,
 } from 'lucide-react'
 import BrandIcon from '@/components/BrandIcon'
 
@@ -24,13 +24,13 @@ const CONNECTORS: ConnectorDef[] = [
   { id: 'github',     label: 'GitHub',          desc: 'Repos, pull requests, and issues',      brandClass: 'fa-brands fa-github', color: 'text-zinc-200', bg: 'bg-zinc-500/10', border: 'border-zinc-500/30', category: 'Developer Tools', badge: 'Code' },
   { id: 'azuredevops', label: 'Azure DevOps',   desc: 'Repos, commits, PRs, boards, and pipelines', brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-200', bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', category: 'Developer Tools', badge: 'Azure' },
   { id: 'webhook',    label: 'Inbound Webhook',  desc: 'Receive push events in real-time',      Icon: WebhookIcon,   color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/30',   category: 'API',       badge: 'Push', noTest: true },
-  { id: 'postgresql', label: 'PostgreSQL',       desc: 'Tables, views, incremental / CDC',      Icon: Database,      color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/30',    category: 'Database' },
-  { id: 'mysql',      label: 'MySQL / MariaDB',  desc: 'Tables or custom SQL queries',          Icon: Database,      color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/30',  category: 'Database' },
-  { id: 'mongodb',    label: 'MongoDB',          desc: 'Collections, pipelines & aggregations', Icon: Database,      color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', category: 'Database', badge: 'NoSQL' },
-  { id: 'redis',      label: 'Redis',            desc: 'Keys, hashes, streams, RediSearch, RedisJSON', Icon: Database, color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30', category: 'Database', badge: 'Cache' },
-  { id: 'mssql',     label: 'SQL Server / Azure SQL', desc: 'Tables, views, stored procedures, full SQL browser', Icon: Database, color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/30', category: 'Database', badge: 'Microsoft' },
-  { id: 'rabbitmq',  label: 'RabbitMQ',         desc: 'Browse queues, exchanges, and messages via management API', Icon: Zap, color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'Database', badge: 'Queue' },
-  { id: 'mqtt',      label: 'MQTT',             desc: 'Subscribe to topics, browse retained messages', Icon: Zap, color: 'text-emerald-300', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', category: 'Database', badge: 'IoT' },
+  { id: 'postgresql', label: 'PostgreSQL',       desc: 'Tables, views, incremental / CDC',      brandClass: 'fa-solid fa-database',      color: '#336791',    bg: 'bg-blue-500/10',    border: 'border-blue-500/30',    category: 'Database' },
+  { id: 'mysql',      label: 'MySQL / MariaDB',  desc: 'Tables or custom SQL queries',          brandClass: 'fa-solid fa-database',      color: '#00758F',  bg: 'bg-cyan-500/10',  border: 'border-cyan-500/30',  category: 'Database' },
+  { id: 'mongodb',    label: 'MongoDB',          desc: 'Collections, pipelines & aggregations', brandClass: 'fa-solid fa-leaf',      color: '#47A248', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', category: 'Database', badge: 'NoSQL' },
+  { id: 'redis',      label: 'Redis',            desc: 'Keys, hashes, streams, RediSearch, RedisJSON', brandClass: 'fa-solid fa-cubes-stacked', color: '#DC382D', bg: 'bg-red-500/10', border: 'border-red-500/30', category: 'Database', badge: 'Cache' },
+  { id: 'mssql',     label: 'SQL Server / Azure SQL', desc: 'Tables, views, stored procedures, full SQL browser', brandClass: 'fa-solid fa-database', color: '#CC2927', bg: 'bg-red-500/10', border: 'border-red-500/30', category: 'Database', badge: 'Microsoft' },
+  { id: 'rabbitmq',  label: 'RabbitMQ',         desc: 'Browse queues, exchanges, and messages via management API', brandClass: 'fa-solid fa-rabbit', color: '#FF6600', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'Database', badge: 'Queue' },
+  { id: 'mqtt',      label: 'MQTT',             desc: 'Subscribe to topics, browse retained messages', brandClass: 'fa-solid fa-tower-broadcast', color: '#660066', bg: 'bg-purple-500/10', border: 'border-purple-500/30', category: 'Database', badge: 'IoT' },
   { id: 'rss',       label: 'RSS / Atom Feed',  desc: 'Subscribe to RSS/Atom feeds with delta sync', Icon: Rss, color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'API', badge: 'Feed' },
   { id: 'websocket', label: 'WebSocket',        desc: 'Live streaming data from WS/WSS endpoints', Icon: Radio, color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/10', border: 'border-fuchsia-500/30', category: 'API', badge: 'Live' },
   { id: 's3',         label: 'S3 / R2 / GCS',   desc: 'Object storage, JSON/CSV/Parquet',      Icon: Cloud,         color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/30',  category: 'Storage' },
@@ -39,8 +39,8 @@ const CONNECTORS: ConnectorDef[] = [
   { id: 'file',        label: 'File Upload',      desc: 'CSV, JSON, JSONL — upload directly',            Icon: FileText,   color: 'text-lime-400',    bg: 'bg-lime-500/10',    border: 'border-lime-500/30',    category: 'Storage',    badge: 'Local',  noTest: true },
   { id: 'appinsights', label: 'App Insights (API key)', desc: 'Application ID + API key for App Insights Analytics queries', brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', category: 'Monitoring', badge: 'Azure' },
   { id: 'azuremonitor', label: 'Azure Monitor (OAuth)', desc: 'Workspace queries via Entra client credentials', brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-300', bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', category: 'Monitoring', badge: 'Azure' },
-  { id: 'elasticsearch', label: 'Elasticsearch / OpenSearch', desc: 'Logs and events via KQL-compatible queries', Icon: Database, color: 'text-amber-300', bg: 'bg-amber-500/10', border: 'border-amber-500/30', category: 'Monitoring', badge: 'Logs' },
-  { id: 'datadog', label: 'Datadog', desc: 'Logs and events with KQL-first observability queries', Icon: BarChart2, color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-500/30', category: 'Monitoring', badge: 'SaaS' },
+  { id: 'elasticsearch', label: 'Elasticsearch / OpenSearch', desc: 'Logs and events via KQL-compatible queries', brandClass: 'fa-solid fa-magnifying-glass', color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/30', category: 'Monitoring', badge: 'Logs' },
+  { id: 'datadog', label: 'Datadog', desc: 'Logs and events with KQL-first observability queries', brandClass: 'fa-solid fa-dog', color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/30', category: 'Monitoring', badge: 'SaaS' },
   { id: 'azureb2c',    label: 'Azure AD B2C',    desc: 'Microsoft Graph users, user flows, and policies', brandClass: 'fa-brands fa-microsoft', color: 'text-teal-400',    bg: 'bg-teal-500/10',    border: 'border-teal-500/30',    category: 'Identity',   badge: 'Azure' },
   { id: 'azureentraid',label: 'Azure Entra ID',  desc: 'Microsoft Graph users, groups, and applications', brandClass: 'fa-brands fa-microsoft', color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/30', category: 'Identity', badge: 'Azure' },
 ]
@@ -145,6 +145,7 @@ interface DatabaseForm {
   cursorColumn: string; cursorType: string; enableCdc: boolean; schedule: string
   useConnectionString: boolean; connectionString: string
   collection: string; filter: string
+  fetchingDatabases: boolean; availableDatabases: string[]; showDatabaseDropdown: boolean
 }
 interface S3Form {
   name: string; description: string; provider: string; bucket: string
@@ -186,6 +187,7 @@ interface MssqlForm {
   schema: string
   defaultCatalog: 'tables' | 'views' | 'columns' | 'procedures' | 'indexes' | 'databases'
   schedule: string
+  fetchingDatabases: boolean; availableDatabases: string[]
 }
 interface RabbitMQForm {
   name: string; description: string
@@ -867,6 +869,7 @@ const makeInitDb = (port: string): DatabaseForm => ({
   name: '', description: '', host: '', port, database: '', dbUser: '', dbPass: '', ssl: true, sslMode: 'verify-full',
   tableOrQuery: '', syncMode: 'incremental', cursorColumn: 'updated_at', cursorType: 'timestamp',
   enableCdc: false, schedule: '1h', useConnectionString: false, connectionString: '', collection: '', filter: '',
+  fetchingDatabases: false, availableDatabases: [], showDatabaseDropdown: false,
 })
 const INIT_S3: S3Form = {
   name: '', description: '', provider: 'aws', bucket: '', region: 'us-east-1',
@@ -890,6 +893,7 @@ const INIT_MSSQL: MssqlForm = {
   host: '', port: '1433', database: 'master', dbUser: 'sa', dbPass: '',
   instanceName: '', encrypt: true, trustServerCertificate: false, schema: 'dbo',
   defaultCatalog: 'tables', schedule: 'on-demand',
+  fetchingDatabases: false, availableDatabases: [],
 }
 const INIT_RABBIT: RabbitMQForm = {
   name: '', description: '', connectionMode: 'fields', connectionString: '',
@@ -1229,7 +1233,19 @@ function WebhookConfigure({ form, set, errors }: { form: WebhookForm; set: (f: W
   )
 }
 
-function DatabaseConfigure({ form, set, errors, type }: { form: DatabaseForm; set: (f: DatabaseForm) => void; errors: FieldErrors; type: ConnectorId }) {
+function DatabaseConfigure({
+  form,
+  set,
+  errors,
+  type,
+  onFetchDatabases,
+}: {
+  form: DatabaseForm
+  set: (f: DatabaseForm) => void
+  errors: FieldErrors
+  type: ConnectorId
+  onFetchDatabases: () => void
+}) {
   const f = <K extends keyof DatabaseForm>(k: K, v: DatabaseForm[K]) => set({ ...form, [k]: v })
   const isMongo = type === 'mongodb'; const isPg = type === 'postgresql'
   const defaultPort = type === 'mysql' ? '3306' : type === 'mongodb' ? '27017' : '5432'
@@ -1252,10 +1268,45 @@ function DatabaseConfigure({ form, set, errors, type }: { form: DatabaseForm; se
             <FieldRow label="Port" error={errors.port}><FInput value={form.port || defaultPort} onChange={v => f('port', v)} placeholder={defaultPort} error={errors.port} /></FieldRow>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <FieldRow label="Database" error={errors.database}><FInput value={form.database} onChange={v => f('database', v)} placeholder="mydb" error={errors.database} /></FieldRow>
             <FieldRow label="Username" error={errors.dbUser}><FInput value={form.dbUser} onChange={v => f('dbUser', v)} placeholder={isPg ? 'postgres' : 'root'} error={errors.dbUser} /></FieldRow>
+            <FieldRow label="Password" error={errors.dbPass}><FInput type="password" value={form.dbPass} onChange={v => f('dbPass', v)} placeholder="••••••••" error={errors.dbPass} /></FieldRow>
           </div>
-          <FieldRow label="Password" error={errors.dbPass}><FInput type="password" value={form.dbPass} onChange={v => f('dbPass', v)} placeholder="••••••••" error={errors.dbPass} /></FieldRow>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <FieldRow label="Database" error={errors.database}>
+                  {form.showDatabaseDropdown && form.availableDatabases.length > 0 ? (
+                    <FSelect value={form.database} onChange={v => f('database', v)}>
+                      <option value="">Select a database...</option>
+                      {form.availableDatabases.map(db => (
+                        <option key={db} value={db}>{db}</option>
+                      ))}
+                    </FSelect>
+                  ) : (
+                    <FInput value={form.database} onChange={v => f('database', v)} placeholder="mydb" error={errors.database} />
+                  )}
+                </FieldRow>
+              </div>
+              <button
+                type="button"
+                onClick={onFetchDatabases}
+                disabled={form.fetchingDatabases || !form.host || !form.dbUser || !form.dbPass}
+                className="mt-5 flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Fetch available databases"
+              >
+                {form.fetchingDatabases ? (
+                  <><Loader2 size={11} className="animate-spin" /> Loading...</>
+                ) : (
+                  <><RefreshCw size={11} /> Fetch</>
+                )}
+              </button>
+            </div>
+            {form.showDatabaseDropdown && (
+              <div className="text-[10px] text-sky-200/70">
+                💡 {form.availableDatabases.length} database{form.availableDatabases.length === 1 ? '' : 's'} found • Click Fetch again to refresh or type manually
+              </div>
+            )}
+          </div>
         </>
       )}
       {!isMongo && (
@@ -1279,9 +1330,14 @@ function DatabaseConfigure({ form, set, errors, type }: { form: DatabaseForm; se
           <FieldRow label="Filter (optional)"><FInput value={form.filter} onChange={v => f('filter', v)} placeholder='{ "status": "active" }' /></FieldRow>
         </>
       ) : (
-        <FieldRow label="Table or SQL Query" error={errors.tableOrQuery}>
-          <FInput value={form.tableOrQuery} onChange={v => f('tableOrQuery', v)} placeholder="orders — or — SELECT id, amount FROM orders" error={errors.tableOrQuery} />
-        </FieldRow>
+        <>
+          <FieldRow label="Table or SQL Query" error={errors.tableOrQuery}>
+            <FInput value={form.tableOrQuery} onChange={v => f('tableOrQuery', v)} placeholder="orders — or — SELECT id, amount FROM orders" error={errors.tableOrQuery} />
+          </FieldRow>
+          <div className="p-2.5 rounded-lg border border-sky-500/20 bg-sky-500/5 text-[10px] text-sky-200/80 leading-relaxed">
+            💡 <span className="font-semibold">Sync multiple tables:</span> Create datasets linked to this connector with different table names
+          </div>
+        </>
       )}
       <Divider label="Sync Mode" />
       <FieldRow label="Strategy">
@@ -1547,7 +1603,17 @@ function parseCSV(text: string): Record<string, unknown>[] {
 }
 
 /* ── MSSQL Configure step ────────────────────────────────────────── */
-function MssqlConfigure({ form, set, errors }: { form: MssqlForm; set: (f: MssqlForm) => void; errors: FieldErrors }) {
+function MssqlConfigure({
+  form,
+  set,
+  errors,
+  onFetchDatabases,
+}: {
+  form: MssqlForm
+  set: (f: MssqlForm) => void
+  errors: FieldErrors
+  onFetchDatabases: () => void
+}) {
   const f = <K extends keyof MssqlForm>(k: K, v: MssqlForm[K]) => set({ ...form, [k]: v })
   return (
     <div className="space-y-4 animate-fade-in">
@@ -1575,9 +1641,42 @@ function MssqlConfigure({ form, set, errors }: { form: MssqlForm; set: (f: Mssql
             <FInput value={form.instanceName} onChange={v => f('instanceName', v)} placeholder="SQLEXPRESS" />
           </FieldRow>
           <div className="grid grid-cols-2 gap-3">
-            <FieldRow label="Database" error={errors.database}>
-              <FInput value={form.database} onChange={v => f('database', v)} placeholder="master" error={errors.database} />
-            </FieldRow>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <FieldRow label="Database" error={errors.database}>
+                    {form.availableDatabases.length > 0 ? (
+                      <FSelect value={form.database} onChange={v => f('database', v)}>
+                        <option value="">Select a database...</option>
+                        {form.availableDatabases.map(db => (
+                          <option key={db} value={db}>{db}</option>
+                        ))}
+                      </FSelect>
+                    ) : (
+                      <FInput value={form.database} onChange={v => f('database', v)} placeholder="master" error={errors.database} />
+                    )}
+                  </FieldRow>
+                </div>
+                <button
+                  type="button"
+                  onClick={onFetchDatabases}
+                  disabled={form.fetchingDatabases || !form.host || !form.dbUser || !form.dbPass}
+                  className="mt-5 flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Fetch available databases"
+                >
+                  {form.fetchingDatabases ? (
+                    <><Loader2 size={11} className="animate-spin" /> Loading...</>
+                  ) : (
+                    <><RefreshCw size={11} /> Fetch</>
+                  )}
+                </button>
+              </div>
+              {form.availableDatabases.length > 0 && (
+                <div className="text-[10px] text-sky-200/70">
+                  💡 {form.availableDatabases.length} database{form.availableDatabases.length === 1 ? '' : 's'} found • Click Fetch again to refresh or type manually
+                </div>
+              )}
+            </div>
             <FieldRow label="Schema">
               <FInput value={form.schema} onChange={v => f('schema', v)} placeholder="dbo" />
             </FieldRow>
@@ -1607,6 +1706,25 @@ function MssqlConfigure({ form, set, errors }: { form: MssqlForm; set: (f: Mssql
           <option value="databases">Databases</option>
         </FSelect>
       </FieldRow>
+      <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/5">
+        <div className="text-xs font-semibold text-sky-200 mb-1.5 flex items-center gap-1.5">
+          <FileJson size={12} className="shrink-0" />
+          Sync Specific Tables
+        </div>
+        <div className="text-[11px] text-sky-200/80 leading-relaxed">
+          To sync specific tables or multiple tables to datasets:
+          <ol className="list-decimal ml-4 mt-1.5 space-y-1">
+            <li>Create this connector first</li>
+            <li>Go to <span className="font-semibold">Datasets</span> page</li>
+            <li>Click <span className="font-semibold">New Dataset</span> → <span className="font-semibold">Existing Connector</span></li>
+            <li>Select this connector and specify the table name in the <span className="font-semibold">Resource</span> field</li>
+            <li>Repeat for each table you want to sync</li>
+          </ol>
+          <div className="mt-2 text-[10px] opacity-75">
+            💡 The connector's sync will automatically update all linked datasets with their respective tables.
+          </div>
+        </div>
+      </div>
       <Divider label="Schedule" />
       <FieldRow label="Sync Interval"><ScheduleSelect value={form.schedule} onChange={v => f('schedule', v)} /></FieldRow>
     </div>
@@ -3809,6 +3927,76 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
   const errors = touched ? validate() : {}
   const hasErrors = Object.keys(validate()).length > 0
 
+  // Fetch databases for PostgreSQL/MySQL
+  async function fetchDatabasesForDb() {
+    const dbType = type === 'postgresql' ? 'postgresql' : type === 'mysql' ? 'mysql' : null
+    if (!dbType) return
+
+    setDbForm(f => ({ ...f, fetchingDatabases: true, availableDatabases: [] }))
+
+    try {
+      const response = await fetch('/api/connectors/fetch-databases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: dbType,
+          host: dbForm.host,
+          port: dbForm.port,
+          dbUser: dbForm.dbUser,
+          dbPass: dbForm.dbPass,
+          ssl: dbForm.ssl,
+          sslMode: dbForm.sslMode,
+        }),
+      })
+
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || 'Failed to fetch databases')
+      }
+
+      const data = await response.json()
+      setDbForm(f => ({ ...f, fetchingDatabases: false, availableDatabases: data.databases || [], showDatabaseDropdown: true }))
+    } catch (error: any) {
+      console.error('Failed to fetch databases:', error)
+      setDbForm(f => ({ ...f, fetchingDatabases: false }))
+      alert(`Failed to fetch databases: ${error.message}`)
+    }
+  }
+
+  // Fetch databases for SQL Server
+  async function fetchDatabasesForMssql() {
+    setMssqlForm(f => ({ ...f, fetchingDatabases: true, availableDatabases: [] }))
+
+    try {
+      const response = await fetch('/api/connectors/fetch-databases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'mssql',
+          host: mssqlForm.host,
+          port: mssqlForm.port,
+          dbUser: mssqlForm.dbUser,
+          dbPass: mssqlForm.dbPass,
+          instanceName: mssqlForm.instanceName,
+          encrypt: mssqlForm.encrypt,
+          trustServerCertificate: mssqlForm.trustServerCertificate,
+        }),
+      })
+
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || 'Failed to fetch databases')
+      }
+
+      const data = await response.json()
+      setMssqlForm(f => ({ ...f, fetchingDatabases: false, availableDatabases: data.databases || [] }))
+    } catch (error: any) {
+      console.error('Failed to fetch databases:', error)
+      setMssqlForm(f => ({ ...f, fetchingDatabases: false }))
+      alert(`Failed to fetch databases: ${error.message}`)
+    }
+  }
+
   async function advance() {
     if (step === 1) { // configure step
       setTouched(true)
@@ -4252,9 +4440,24 @@ export default function ConnectorWizard({ onClose, onCreated, initialDraft = nul
           )}
           {step === 1 && type === 'http' && <HttpConfigure form={httpForm} set={setHttpForm} errors={errors} />}
           {step === 1 && type === 'webhook' && <WebhookConfigure form={webhookForm} set={setWebhookForm} errors={errors} />}
-          {step === 1 && (type === 'postgresql' || type === 'mysql' || type === 'mongodb') && <DatabaseConfigure form={dbForm} set={setDbForm} errors={errors} type={type} />}
+          {step === 1 && (type === 'postgresql' || type === 'mysql' || type === 'mongodb') && (
+            <DatabaseConfigure
+              form={dbForm}
+              set={setDbForm}
+              errors={errors}
+              type={type}
+              onFetchDatabases={fetchDatabasesForDb}
+            />
+          )}
           {step === 1 && type === 'redis' && <RedisConfigure form={redisForm} set={setRedisForm} errors={errors} />}
-          {step === 1 && type === 'mssql' && <MssqlConfigure form={mssqlForm} set={setMssqlForm} errors={errors} />}
+          {step === 1 && type === 'mssql' && (
+            <MssqlConfigure
+              form={mssqlForm}
+              set={setMssqlForm}
+              errors={errors}
+              onFetchDatabases={fetchDatabasesForMssql}
+            />
+          )}
           {step === 1 && type === 'rabbitmq' && <RabbitMQConfigure form={rabbitForm} set={setRabbitForm} errors={errors} />}
           {step === 1 && type === 'mqtt' && <MqttConfigure form={mqttForm} set={setMqttForm} errors={errors} />}
           {step === 1 && type === 'rss' && <RssConfigure form={rssForm} set={setRssForm} errors={errors} />}

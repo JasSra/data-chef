@@ -59,21 +59,21 @@ const TYPE_CFG: Record<ConnectorId, { Icon?: React.ElementType; brandClass?: str
   webhook:    { Icon: Webhook,   color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/20',  label: 'Webhook' },
   s3:         { Icon: Cloud,     color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/20', label: 'S3' },
   sftp:       { Icon: Server,    color: 'text-slate-400',   bg: 'bg-slate-500/10',   border: 'border-slate-500/20',  label: 'SFTP' },
-  postgresql: { Icon: Database,  color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/20',   label: 'PostgreSQL' },
-  mysql:      { Icon: Database,  color: 'text-orange-400',  bg: 'bg-orange-500/10',  border: 'border-orange-500/20', label: 'MySQL' },
-  mongodb:    { Icon: Database,  color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', label: 'MongoDB' },
-  redis:      { Icon: Database,  color: 'text-red-400',    bg: 'bg-red-500/10',     border: 'border-red-500/20',    label: 'Redis' },
-  mssql:      { Icon: Database,  color: 'text-sky-300',    bg: 'bg-sky-500/10',     border: 'border-sky-500/20',    label: 'SQL Server' },
-  rabbitmq:   { Icon: Zap,       color: 'text-orange-300', bg: 'bg-orange-500/10',  border: 'border-orange-500/20', label: 'RabbitMQ' },
-  mqtt:       { Icon: Zap,       color: 'text-emerald-300', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', label: 'MQTT' },
+  postgresql: { brandClass: 'fa-solid fa-database',  color: '#336791',    bg: 'bg-blue-500/10',    border: 'border-blue-500/20',   label: 'PostgreSQL' },
+  mysql:      { brandClass: 'fa-solid fa-database',  color: '#00758F',  bg: 'bg-cyan-500/10',  border: 'border-cyan-500/20', label: 'MySQL' },
+  mongodb:    { brandClass: 'fa-solid fa-leaf',  color: '#47A248', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', label: 'MongoDB' },
+  redis:      { brandClass: 'fa-solid fa-cubes-stacked',  color: '#DC382D',    bg: 'bg-red-500/10',     border: 'border-red-500/20',    label: 'Redis' },
+  mssql:      { brandClass: 'fa-solid fa-database',  color: '#CC2927',    bg: 'bg-red-500/10',     border: 'border-red-500/20',    label: 'SQL Server' },
+  rabbitmq:   { brandClass: 'fa-solid fa-rabbit',  color: '#FF6600', bg: 'bg-orange-500/10',  border: 'border-orange-500/20', label: 'RabbitMQ' },
+  mqtt:       { brandClass: 'fa-solid fa-tower-broadcast',  color: '#660066', bg: 'bg-purple-500/10', border: 'border-purple-500/20', label: 'MQTT' },
   rss:        { Icon: Rss,       color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20', label: 'RSS Feed' },
   websocket:  { Icon: Radio,     color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/10', border: 'border-fuchsia-500/20', label: 'WebSocket' },
   bigquery:   { brandClass: 'fa-brands fa-google', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20', label: 'BigQuery' },
   file:       { Icon: FileText,  color: 'text-lime-400',    bg: 'bg-lime-500/10',    border: 'border-lime-500/20',    label: 'File Upload' },
   appinsights:{ brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', label: 'App Insights' },
   azuremonitor:{ brandClass: 'fa-brands fa-microsoft', color: 'text-cyan-300', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', label: 'Azure Monitor' },
-  elasticsearch:{ Icon: Database, color: 'text-amber-300', bg: 'bg-amber-500/10', border: 'border-amber-500/20', label: 'Elasticsearch / OpenSearch' },
-  datadog:    { Icon: Activity,  color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-500/20', label: 'Datadog' },
+  elasticsearch:{ brandClass: 'fa-solid fa-magnifying-glass', color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/20', label: 'Elasticsearch / OpenSearch' },
+  datadog:    { brandClass: 'fa-solid fa-dog',  color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20', label: 'Datadog' },
   azureb2c:   { brandClass: 'fa-brands fa-microsoft', color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/20', label: 'Azure AD B2C' },
   azureentraid:{ brandClass: 'fa-brands fa-microsoft', color: 'text-sky-300', bg: 'bg-sky-500/10', border: 'border-sky-500/20', label: 'Azure Entra ID' },
 }
@@ -193,9 +193,11 @@ function DiscoveryCard({
 }) {
   const tc = getTypeConfig(candidate.type)
   const Icon = tc.Icon
+  const isDismissed = candidate.status === 'dismissed'
+  const isAdded = candidate.status === 'added'
 
   return (
-    <div className={`rounded-xl border p-4 ${candidate.status === 'dismissed' ? 'border-chef-border/70 bg-chef-bg/60 opacity-80' : 'border-chef-border bg-chef-card'}`}>
+    <div className={`rounded-xl border p-4 ${isDismissed ? 'border-chef-border/70 bg-chef-bg/60 opacity-80' : 'border-chef-border bg-chef-card'}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
           <div className={`w-10 h-10 rounded-xl ${tc.bg} ${tc.border} border flex items-center justify-center shrink-0`}>
@@ -222,13 +224,17 @@ function DiscoveryCard({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {candidate.status === 'dismissed' ? (
+        {isDismissed ? (
           <button
             onClick={onRestore}
             className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-3 py-1.5 text-[11px] text-chef-text hover:border-indigo-500/20 hover:bg-chef-bg transition-colors"
           >
             <Undo2 size={11} /> Restore
           </button>
+        ) : isAdded ? (
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-300">
+            <CheckCircle2 size={11} /> Added
+          </span>
         ) : (
           <>
             <button
@@ -246,6 +252,216 @@ function DiscoveryCard({
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+function DiscoveryStatusPill({ status }: { status: DiscoveryCandidate['status'] }) {
+  const styles = status === 'dismissed'
+    ? 'border-chef-border bg-chef-bg text-chef-muted'
+    : status === 'added'
+      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+      : 'border-indigo-500/20 bg-indigo-500/10 text-indigo-300'
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold capitalize ${styles}`}>
+      {status}
+    </span>
+  )
+}
+
+function DiscoveryActionButtons({
+  candidate,
+  onAdd,
+  onDismiss,
+  onRestore,
+}: {
+  candidate: DiscoveryCandidate
+  onAdd: () => void
+  onDismiss: () => void
+  onRestore: () => void
+}) {
+  if (candidate.status === 'dismissed') {
+    return (
+      <button
+        onClick={event => { event.stopPropagation(); onRestore() }}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-2.5 py-1.5 text-[11px] text-chef-text hover:border-indigo-500/20 hover:bg-chef-bg transition-colors"
+      >
+        <Undo2 size={11} /> Restore
+      </button>
+    )
+  }
+
+  if (candidate.status === 'added') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-medium text-emerald-300">
+        <CheckCircle2 size={11} /> Added
+      </span>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={event => { event.stopPropagation(); onAdd() }}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-500 transition-colors"
+      >
+        <Plus size={11} /> Add
+      </button>
+      <button
+        onClick={event => { event.stopPropagation(); onDismiss() }}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-2.5 py-1.5 text-[11px] text-chef-muted hover:text-chef-text hover:border-indigo-500/20 transition-colors"
+      >
+        <EyeOff size={11} /> Dismiss
+      </button>
+    </div>
+  )
+}
+
+function DiscoveryTableView({
+  candidates,
+  onAdd,
+  onDismiss,
+  onRestore,
+}: {
+  candidates: DiscoveryCandidate[]
+  onAdd: (candidateId: string) => void
+  onDismiss: (candidateId: string) => void
+  onRestore: (candidateId: string) => void
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-chef-border bg-chef-card">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-[11px]">
+          <thead className="bg-chef-bg/80 text-chef-muted uppercase tracking-wider">
+            <tr>
+              <th className="px-4 py-3 font-medium">Service</th>
+              <th className="px-4 py-3 font-medium">Host / IP</th>
+              <th className="px-4 py-3 font-medium">Port</th>
+              <th className="px-4 py-3 font-medium">Confidence</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Last seen</th>
+              <th className="px-4 py-3 font-medium text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {candidates.map(candidate => {
+              const tc = getTypeConfig(candidate.type)
+              const canOpenDraft = candidate.status === 'new'
+              return (
+                <tr
+                  key={candidate.id}
+                  onClick={() => { if (canOpenDraft) onAdd(candidate.id) }}
+                  className={`border-t border-chef-border ${canOpenDraft ? 'cursor-pointer hover:bg-chef-bg/70' : 'hover:bg-chef-bg/40'}`}
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-lg ${tc.bg} ${tc.border} border flex items-center justify-center shrink-0`}>
+                        <BrandIcon icon={tc.Icon} brandClass={tc.brandClass} size={14} className={tc.color} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-chef-text truncate">{candidate.displayName}</div>
+                        <div className={`text-[10px] font-mono ${tc.color}`}>{tc.label}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-chef-text">{candidate.host}</td>
+                  <td className="px-4 py-3 font-mono text-chef-text">{candidate.port}</td>
+                  <td className="px-4 py-3 text-chef-text">{Math.round(candidate.confidence * 100)}%</td>
+                  <td className="px-4 py-3"><DiscoveryStatusPill status={candidate.status} /></td>
+                  <td className="px-4 py-3 text-chef-muted">{candidate.lastSeen}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end">
+                      <DiscoveryActionButtons
+                        candidate={candidate}
+                        onAdd={() => onAdd(candidate.id)}
+                        onDismiss={() => onDismiss(candidate.id)}
+                        onRestore={() => onRestore(candidate.id)}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function DiscoveryTreeView({
+  groups,
+  expandedHosts,
+  onToggleHost,
+  onAdd,
+  onDismiss,
+  onRestore,
+}: {
+  groups: Array<{ host: string; candidates: DiscoveryCandidate[] }>
+  expandedHosts: Record<string, boolean>
+  onToggleHost: (host: string) => void
+  onAdd: (candidateId: string) => void
+  onDismiss: (candidateId: string) => void
+  onRestore: (candidateId: string) => void
+}) {
+  return (
+    <div className="space-y-3">
+      {groups.map(group => {
+        const expanded = expandedHosts[group.host] ?? true
+        return (
+          <div key={group.host} className="overflow-hidden rounded-xl border border-chef-border bg-chef-card">
+            <button
+              onClick={() => onToggleHost(group.host)}
+              className="flex w-full items-center gap-3 border-b border-chef-border px-4 py-3 text-left hover:bg-chef-bg/60 transition-colors"
+            >
+              <ChevronRight size={14} className={`text-chef-muted transition-transform ${expanded ? 'rotate-90' : ''}`} />
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-sm text-chef-text truncate">{group.host}</div>
+                <div className="text-[10px] text-chef-muted">{group.candidates.length} discovered service{group.candidates.length === 1 ? '' : 's'}</div>
+              </div>
+            </button>
+            {expanded && (
+              <div className="divide-y divide-chef-border">
+                {group.candidates.map(candidate => {
+                  const tc = getTypeConfig(candidate.type)
+                  const canOpenDraft = candidate.status === 'new'
+                  return (
+                    <div
+                      key={candidate.id}
+                      onClick={() => { if (canOpenDraft) onAdd(candidate.id) }}
+                      className={`flex items-center gap-3 px-4 py-3 ${canOpenDraft ? 'cursor-pointer hover:bg-chef-bg/60' : 'hover:bg-chef-bg/40'}`}
+                    >
+                      <div className={`w-9 h-9 rounded-xl ${tc.bg} ${tc.border} border flex items-center justify-center shrink-0`}>
+                        <BrandIcon icon={tc.Icon} brandClass={tc.brandClass} size={16} className={tc.color} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-chef-text truncate">{candidate.displayName}</span>
+                          <DiscoveryStatusPill status={candidate.status} />
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-chef-muted">
+                          <span className={`font-mono ${tc.color}`}>{tc.label}</span>
+                          <span>Port {candidate.port}</span>
+                          <span>{Math.round(candidate.confidence * 100)}% confidence</span>
+                          <span>{candidate.lastSeen}</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-chef-muted line-clamp-2">{candidate.matchReason}</div>
+                      </div>
+                      <DiscoveryActionButtons
+                        candidate={candidate}
+                        onAdd={() => onAdd(candidate.id)}
+                        onDismiss={() => onDismiss(candidate.id)}
+                        onRestore={() => onRestore(candidate.id)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -491,6 +707,7 @@ function DetailPanel({ conn, onToggle, onSync, onExport, onCopy, onClone, onEdit
 
 /* ── Main page ───────────────────────────────────────────────────── */
 type FilterType = ConnectorId | 'all'
+type DiscoveryViewMode = 'cards' | 'table' | 'tree'
 
 export default function ConnectionsPage() {
   const [conns, setConns] = useState<Connection[]>([])
@@ -498,6 +715,9 @@ export default function ConnectionsPage() {
   const [discovery, setDiscovery] = useState<DiscoveryOverview | null>(null)
   const [discoveryLoading, setDiscoveryLoading] = useState(true)
   const [showDismissedDiscovery, setShowDismissedDiscovery] = useState(false)
+  const [showDiscoveryDialog, setShowDiscoveryDialog] = useState(false)
+  const [discoveryView, setDiscoveryView] = useState<DiscoveryViewMode>('cards')
+  const [expandedDiscoveryHosts, setExpandedDiscoveryHosts] = useState<Record<string, boolean>>({})
   const [wizardDraft, setWizardDraft] = useState<DiscoveryConnectorDraft | null>(null)
   const [selected, setSelected] = useState<Connection | null>(null)
   const [filter, setFilter] = useState<FilterType>('all')
@@ -550,8 +770,25 @@ export default function ConnectionsPage() {
 
   const connectedCount = conns.filter(c => c.status === 'connected').length
   const runningJobs = jobs.filter(j => j.status === 'running').length
+  const discoveryCandidates = discovery?.candidates ?? []
   const activeDiscovery = (discovery?.candidates ?? []).filter(candidate => candidate.status !== 'dismissed')
   const dismissedDiscovery = (discovery?.candidates ?? []).filter(candidate => candidate.status === 'dismissed')
+  const orderedDiscoveryCandidates = [...discoveryCandidates].sort((a, b) => {
+    const statusWeight = { new: 0, added: 1, dismissed: 2 }
+    const weightDelta = statusWeight[a.status] - statusWeight[b.status]
+    if (weightDelta !== 0) return weightDelta
+    if (a.host !== b.host) return a.host.localeCompare(b.host)
+    if (a.port !== b.port) return a.port - b.port
+    return a.displayName.localeCompare(b.displayName)
+  })
+  const discoveryGroups = Array.from(
+    orderedDiscoveryCandidates.reduce((map, candidate) => {
+      const existing = map.get(candidate.host) ?? []
+      existing.push(candidate)
+      map.set(candidate.host, existing)
+      return map
+    }, new Map<string, DiscoveryCandidate[]>()),
+  ).map(([host, candidates]) => ({ host, candidates }))
 
   const filtered = filter === 'all' ? conns : conns.filter(c => c.type === filter)
   const filterTypes: FilterType[] = ['all', ...Array.from(new Set(conns.map(c => c.type).filter(isKnownConnectorType)))]
@@ -909,6 +1146,13 @@ async function cloneConnector(conn: Connection) {
     }
   }
 
+  function toggleDiscoveryHost(host: string) {
+    setExpandedDiscoveryHosts(prev => ({
+      ...prev,
+      [host]: !(prev[host] ?? true),
+    }))
+  }
+
   async function deleteSelectedConnector() {
     if (!selected || deleteBusy) return
 
@@ -1038,95 +1282,49 @@ async function cloneConnector(conn: Connection) {
         </div>
 
         {(discoveryLoading || discovery?.enabled || activeDiscovery.length > 0 || dismissedDiscovery.length > 0) && (
-          <div className="px-5 py-4 border-b border-chef-border bg-chef-bg/40">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <Radar size={14} className="text-indigo-300 shrink-0" />
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-chef-text">Discovered instances</div>
-                  <div className="text-[11px] text-chef-muted">
-                    {discoveryLoading
-                      ? 'Loading discovery status…'
-                      : discovery?.enabled
-                        ? `${activeDiscovery.length} candidate${activeDiscovery.length === 1 ? '' : 's'} ready · last scan ${discovery?.lastScan ?? 'never'}`
-                        : 'Discovery is disabled in setup settings'}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => void runDiscoveryScan()}
-                disabled={discoveryLoading || discovery?.running || !discovery?.enabled}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/20 px-3 py-1.5 text-[11px] text-indigo-300 hover:bg-indigo-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <RefreshCw size={11} className={discoveryLoading || discovery?.running ? 'animate-spin' : ''} />
-                Rescan
-              </button>
-              {scanLogs.length > 0 && (
-                <button
-                  onClick={() => setShowScanLogs(v => !v)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-3 py-1.5 text-[11px] text-chef-muted hover:text-chef-text hover:bg-chef-card transition-colors"
-                >
-                  <Terminal size={11} />
-                  {showScanLogs ? 'Hide' : 'Show'} Scan Log
-                </button>
-              )}
-            </div>
-
-            {showScanLogs && scanLogs.length > 0 && (
-              <div className="mt-4 rounded-lg border border-chef-border bg-[#0a0c10] p-3 max-h-[300px] overflow-y-auto">
-                <div className="font-mono text-[10px] space-y-0.5">
-                  {scanLogs.map((log, i) => (
-                    <div key={i} className={log.startsWith('═══') ? 'text-indigo-400 font-semibold mt-2' : log.startsWith('✓') ? 'text-emerald-400' : log.includes('error') || log.includes('failed') ? 'text-red-400' : 'text-chef-muted'}>
-                      {log}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {discovery?.enabled && (
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {activeDiscovery.length === 0 && !discoveryLoading && (
-                  <div className="rounded-xl border border-dashed border-chef-border px-4 py-5 text-[11px] text-chef-muted md:col-span-2">
-                    No addable services are currently discoverable on the local network.
-                  </div>
+          <div className="px-5 py-2.5 border-b border-chef-border bg-chef-bg/40">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Radar size={13} className="text-indigo-300 shrink-0" />
+                <span className="text-[11px] font-medium text-chef-text">Network Discovery</span>
+                {activeDiscovery.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 text-[10px] font-semibold">
+                    {activeDiscovery.length}
+                  </span>
                 )}
-                {activeDiscovery.map(candidate => (
-                  <DiscoveryCard
-                    key={candidate.id}
-                    candidate={candidate}
-                    onAdd={() => void startDiscoveryConnector(candidate.id)}
-                    onDismiss={() => void updateDiscoveryStatus(candidate.id, 'dismissed')}
-                    onRestore={() => void updateDiscoveryStatus(candidate.id, 'new')}
-                  />
-                ))}
+                {discoveryLoading && (
+                  <Loader2 size={11} className="text-indigo-400 animate-spin" />
+                )}
               </div>
-            )}
-
-            {dismissedDiscovery.length > 0 && (
-              <div className="mt-4">
-                <button
-                  onClick={() => setShowDismissedDiscovery(value => !value)}
-                  className="inline-flex items-center gap-1.5 text-[11px] text-chef-muted hover:text-chef-text transition-colors"
-                >
-                  <ChevronRight size={11} className={`transition-transform ${showDismissedDiscovery ? 'rotate-90' : ''}`} />
-                  {dismissedDiscovery.length} dismissed candidate{dismissedDiscovery.length === 1 ? '' : 's'}
-                </button>
-                {showDismissedDiscovery && (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    {dismissedDiscovery.map(candidate => (
-                      <DiscoveryCard
-                        key={candidate.id}
-                        candidate={candidate}
-                        onAdd={() => void startDiscoveryConnector(candidate.id)}
-                        onDismiss={() => void updateDiscoveryStatus(candidate.id, 'dismissed')}
-                        onRestore={() => void updateDiscoveryStatus(candidate.id, 'new')}
-                      />
+              <div className="flex items-center gap-2">
+                  <div className="hidden rounded-lg border border-chef-border bg-chef-bg/60 p-1 sm:flex">
+                    {(['cards', 'table', 'tree'] as DiscoveryViewMode[]).map(view => (
+                      <button
+                        key={view}
+                        onClick={() => setDiscoveryView(view)}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors ${discoveryView === view ? 'bg-indigo-500/15 text-indigo-300' : 'text-chef-muted hover:text-chef-text'}`}
+                      >
+                        {view === 'tree' ? 'By IP' : view}
+                      </button>
                     ))}
                   </div>
-                )}
+                <button
+                  onClick={() => void runDiscoveryScan()}
+                  disabled={discoveryLoading || discovery?.running || !discovery?.enabled}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/20 px-2.5 py-1 text-[11px] text-indigo-300 hover:bg-indigo-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw size={10} className={discoveryLoading || discovery?.running ? 'animate-spin' : ''} />
+                  Scan
+                </button>
+                <button
+                  onClick={() => setShowDiscoveryDialog(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] text-indigo-300 hover:bg-indigo-500/15 transition-colors"
+                >
+                  <Radar size={10} />
+                  View Discovered ({activeDiscovery.length + dismissedDiscovery.length})
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -1218,6 +1416,175 @@ async function cloneConnector(conn: Connection) {
         }}
         onConfirm={() => void deleteSelectedConnector()}
       />
+
+      {/* ── Discovery Dialog ── */}
+      {showDiscoveryDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowDiscoveryDialog(false)}>
+          <div className="w-full max-w-5xl max-h-[85vh] m-4 bg-chef-card border border-chef-border rounded-2xl shadow-2xl flex flex-col animate-scale-in" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-chef-border flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                  <Radar size={18} className="text-indigo-300" />
+                </div>
+                <div>
+                  <div className="text-base font-semibold text-chef-text">Discovered Instances</div>
+                  <div className="text-[11px] text-chef-muted">
+                    {discoveryLoading
+                      ? 'Loading discovery status…'
+                      : discovery?.enabled
+                        ? `${activeDiscovery.length} candidate${activeDiscovery.length === 1 ? '' : 's'} ready · last scan ${discovery?.lastScan ?? 'never'}`
+                        : 'Discovery is disabled in setup settings'}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void runDiscoveryScan()}
+                  disabled={discoveryLoading || discovery?.running || !discovery?.enabled}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/20 px-3 py-1.5 text-[11px] text-indigo-300 hover:bg-indigo-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw size={11} className={discoveryLoading || discovery?.running ? 'animate-spin' : ''} />
+                  Rescan
+                </button>
+                {scanLogs.length > 0 && (
+                  <button
+                    onClick={() => setShowScanLogs(v => !v)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-chef-border px-3 py-1.5 text-[11px] text-chef-muted hover:text-chef-text hover:bg-chef-bg transition-colors"
+                  >
+                    <Terminal size={11} />
+                    {showScanLogs ? 'Hide' : 'Show'} Log
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowDiscoveryDialog(false)}
+                  className="p-1.5 text-chef-muted hover:text-chef-text rounded-lg transition-colors"
+                  title="Close dialog"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {showScanLogs && scanLogs.length > 0 && (
+                <div className="mb-6 rounded-lg border border-chef-border bg-[#0a0c10] p-3 max-h-[250px] overflow-y-auto">
+                  <div className="font-mono text-[10px] space-y-0.5">
+                    {scanLogs.map((log, i) => (
+                      <div key={i} className={log.startsWith('═══') ? 'text-indigo-400 font-semibold mt-2' : log.startsWith('✓') ? 'text-emerald-400' : log.includes('error') || log.includes('failed') ? 'text-red-400' : 'text-chef-muted'}>
+                        {log}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {discovery?.enabled ? (
+                <>
+                  {orderedDiscoveryCandidates.length > 0 && discoveryView === 'cards' && (
+                    <div className="mb-6">
+                      <div className="text-xs font-semibold text-chef-text mb-3">Active Candidates</div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {activeDiscovery.map(candidate => (
+                          <DiscoveryCard
+                            key={candidate.id}
+                            candidate={candidate}
+                            onAdd={() => void startDiscoveryConnector(candidate.id)}
+                            onDismiss={() => void updateDiscoveryStatus(candidate.id, 'dismissed')}
+                            onRestore={() => void updateDiscoveryStatus(candidate.id, 'new')}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {orderedDiscoveryCandidates.length > 0 && discoveryView === 'table' && (
+                    <div className="mb-6 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold text-chef-text">Discovered Services</div>
+                          <div className="text-[11px] text-chef-muted">Flat table view across the whole scanned network.</div>
+                        </div>
+                        <div className="text-[11px] text-chef-muted">{orderedDiscoveryCandidates.length} total</div>
+                      </div>
+                      <DiscoveryTableView
+                        candidates={orderedDiscoveryCandidates}
+                        onAdd={candidateId => void startDiscoveryConnector(candidateId)}
+                        onDismiss={candidateId => void updateDiscoveryStatus(candidateId, 'dismissed')}
+                        onRestore={candidateId => void updateDiscoveryStatus(candidateId, 'new')}
+                      />
+                    </div>
+                  )}
+
+                  {orderedDiscoveryCandidates.length > 0 && discoveryView === 'tree' && (
+                    <div className="mb-6 space-y-3">
+                      <div>
+                        <div className="text-xs font-semibold text-chef-text">Grouped by IP / Host</div>
+                        <div className="text-[11px] text-chef-muted">Each host groups the services discovered on that address. Click a service to open the add-connector flow.</div>
+                      </div>
+                      <DiscoveryTreeView
+                        groups={discoveryGroups}
+                        expandedHosts={expandedDiscoveryHosts}
+                        onToggleHost={toggleDiscoveryHost}
+                        onAdd={candidateId => void startDiscoveryConnector(candidateId)}
+                        onDismiss={candidateId => void updateDiscoveryStatus(candidateId, 'dismissed')}
+                        onRestore={candidateId => void updateDiscoveryStatus(candidateId, 'new')}
+                      />
+                    </div>
+                  )}
+
+                  {orderedDiscoveryCandidates.length === 0 && !discoveryLoading && (
+                    <div className="rounded-xl border border-dashed border-chef-border px-6 py-8 text-center">
+                      <Radar size={32} className="text-chef-muted mx-auto mb-3 opacity-50" />
+                      <div className="text-[11px] text-chef-muted">No addable services are currently discoverable on the local network.</div>
+                      <button
+                        onClick={() => void runDiscoveryScan()}
+                        disabled={discoveryLoading || discovery?.running}
+                        className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/20 px-3 py-1.5 text-[11px] text-indigo-300 hover:bg-indigo-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <RefreshCw size={11} className={discoveryLoading || discovery?.running ? 'animate-spin' : ''} />
+                        Run Scan
+                      </button>
+                    </div>
+                  )}
+
+                  {dismissedDiscovery.length > 0 && discoveryView === 'cards' && (
+                    <div>
+                      <button
+                        onClick={() => setShowDismissedDiscovery(value => !value)}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-chef-text hover:text-indigo-300 transition-colors mb-3"
+                      >
+                        <ChevronRight size={13} className={`transition-transform ${showDismissedDiscovery ? 'rotate-90' : ''}`} />
+                        Dismissed ({dismissedDiscovery.length})
+                      </button>
+                      {showDismissedDiscovery && (
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {dismissedDiscovery.map(candidate => (
+                            <DiscoveryCard
+                              key={candidate.id}
+                              candidate={candidate}
+                              onAdd={() => void startDiscoveryConnector(candidate.id)}
+                              onDismiss={() => void updateDiscoveryStatus(candidate.id, 'dismissed')}
+                              onRestore={() => void updateDiscoveryStatus(candidate.id, 'new')}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-xl border border-dashed border-chef-border px-6 py-8 text-center">
+                  <Radar size={32} className="text-chef-muted mx-auto mb-3 opacity-50" />
+                  <div className="text-sm font-medium text-chef-text mb-1">Network Discovery is Disabled</div>
+                  <div className="text-[11px] text-chef-muted">Enable it in Setup Settings to automatically discover services on your network.</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

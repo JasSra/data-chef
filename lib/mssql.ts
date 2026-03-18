@@ -35,10 +35,14 @@ function formatValue(value: unknown): string {
 }
 
 function normaliseCfg(input: Record<string, unknown>): MssqlConnectionConfig {
+  // In Docker, use host.docker.internal to reach host machine
+  // Override with MSSQL_DEFAULT_HOST env var if needed
+  const defaultHost = process.env.MSSQL_DEFAULT_HOST ?? 'host.docker.internal'
+  
   return {
     connectionMode: (input.connectionMode as MssqlConnectionConfig['connectionMode']) ?? 'fields',
     connectionString: input.connectionString as string | undefined,
-    host: (input.host as string | undefined) ?? 'localhost',
+    host: (input.host as string | undefined) ?? defaultHost,
     port: Number(input.port ?? 1433),
     database: (input.database as string | undefined) ?? 'master',
     dbUser: (input.dbUser as string | undefined) ?? 'sa',
@@ -56,7 +60,7 @@ async function getMssqlPool(config: MssqlConnectionConfig) {
     return await sql.connect(config.connectionString)
   }
   return await sql.connect({
-    server: config.host ?? 'localhost',
+    server: config.host ?? 'host.docker.internal',
     port: config.port ?? 1433,
     database: config.database ?? 'master',
     user: config.dbUser ?? 'sa',
@@ -184,9 +188,22 @@ export async function sampleMssqlRowsFromConfig(
   let pool: Awaited<ReturnType<typeof getMssqlPool>> | null = null
   try {
     pool = await getMssqlPool(cfg)
-    const src = resource?.trim()
-      ? (resource.includes(' ') ? `(${resource}) AS _sub` : `[${schema}].[${resource}]`)
-      : `[${schema}].[dbo_sample]`
+    
+    // If no resource specified, get the first available table
+    let tableName = resource?.trim()
+    if (!tableName) {
+      const tablesResult = await pool.query(
+        `SELECT TOP 1 TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '${schema}' AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`
+      )
+      if (!tablesResult.recordset || tablesResult.recordset.length === 0) {
+        throw new Error(`No tables found in schema '${schema}'. Please specify a table name or query in the connector configuration.`)
+      }
+      tableName = tablesResult.recordset[0].TABLE_NAME as string
+    }
+    
+    const src = tableName.includes(' ') 
+      ? `(${tableName}) AS _sub` 
+      : `[${schema}].[${tableName}]`
     const result = await pool.query(`SELECT TOP ${rowLimit} * FROM ${src}`)
     return result.recordset ?? []
   } finally {

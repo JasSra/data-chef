@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import {
-  X, Globe, Database, Cloud, Upload, Plug2, ChevronRight,
-  CheckCircle2, Loader2, ArrowLeft, AlertCircle, FileJson, Table,
+  X, Globe, Cloud, Upload, Plug2, ChevronRight,
+  CheckCircle2, Loader2, ArrowLeft, AlertCircle, FileJson, Table, CheckSquare, Square, Database,
 } from 'lucide-react'
+import BrandIcon from '@/components/BrandIcon'
 
 /* ── Types ───────────────────────────────────────────────────────────────────── */
 type SourceId = 'http' | 'pg' | 'mysql' | 's3' | 'file' | 'conn'
@@ -34,8 +35,8 @@ interface PreviewResult {
 /* ── Source type definitions ─────────────────────────────────────────────────── */
 const SOURCES = [
   { id: 'http'  as SourceId, Icon: Globe,    label: 'HTTP API',           desc: 'REST, GraphQL, webhooks',   color: 'text-sky-400',     bg: 'bg-sky-500/10',     border: 'border-sky-500/30' },
-  { id: 'pg'    as SourceId, Icon: Database, label: 'PostgreSQL',         desc: 'Direct table or SQL query', color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/30' },
-  { id: 'mysql' as SourceId, Icon: Database, label: 'MySQL / MariaDB',    desc: 'Table or custom query',     color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/30' },
+  { id: 'pg'    as SourceId, brandClass: 'fa-solid fa-database', label: 'PostgreSQL',         desc: 'Direct table or SQL query', color: '#336791',    bg: 'bg-blue-500/10',    border: 'border-blue-500/30' },
+  { id: 'mysql' as SourceId, brandClass: 'fa-solid fa-database', label: 'MySQL / MariaDB',    desc: 'Table or custom query',     color: '#00758F',  bg: 'bg-cyan-500/10',  border: 'border-cyan-500/30' },
   { id: 's3'    as SourceId, Icon: Cloud,    label: 'S3 / R2 / GCS',      desc: 'Object storage buckets',    color: 'text-violet-400',  bg: 'bg-violet-500/10',  border: 'border-violet-500/30' },
   { id: 'file'  as SourceId, Icon: Upload,   label: 'File Upload',        desc: 'JSON, JSONL, CSV, Parquet', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30' },
   { id: 'conn'  as SourceId, Icon: Plug2,    label: 'Existing Connector', desc: 'Reuse a saved connection',  color: 'text-indigo-400',  bg: 'bg-indigo-500/10',  border: 'border-indigo-500/30' },
@@ -113,7 +114,7 @@ function StepSource({ selected, onSelect }: { selected: SourceId | null; onSelec
     <div className="animate-fade-in">
       <p className="text-sm text-chef-muted mb-5">Choose where your data lives. You can configure multiple sources later.</p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {SOURCES.map(({ id, Icon, label, desc, color, bg, border }) => (
+        {SOURCES.map(({ id, Icon, brandClass, label, desc, color, bg, border }) => (
           <button
             key={id}
             onClick={() => onSelect(id)}
@@ -124,7 +125,7 @@ function StepSource({ selected, onSelect }: { selected: SourceId | null; onSelec
             }`}
           >
             <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${bg} ${border} border`}>
-              <Icon size={17} className={color} />
+              <BrandIcon icon={Icon} brandClass={brandClass} size={17} className={color} />
             </div>
             <div>
               <div className="text-sm font-semibold text-chef-text leading-tight">{label}</div>
@@ -153,6 +154,8 @@ interface FormState {
   fileName: string
   // Conn
   connection: string; resource: string
+  // Multi-table selection
+  multiTableMode: boolean; selectedTables: string[]
 }
 
 const INIT_FORM: FormState = {
@@ -160,6 +163,7 @@ const INIT_FORM: FormState = {
   host: '', port: '5432', database: '', dbUser: '', dbPass: '', ssl: true, tableOrQuery: '',
   bucket: '', region: 'us-east-1', accessKey: '', secretKey: '', prefix: '',
   fileName: '', connection: '', resource: '',
+  multiTableMode: false, selectedTables: [],
 }
 
 function StepConfigure({
@@ -347,16 +351,49 @@ function StepConfigure({
                 : connectors.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
             </Select>
           </FieldRow>
-          <FieldRow label="Resource / Path">
-            <Input
-              placeholder={form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureb2c'
-                ? 'e.g. users, userFlows, customPolicies, or /users?$filter=...'
-                : form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureentraid'
-                ? 'e.g. users, groups, applications, or /groups?$filter=...'
-                : 'e.g. /v1/charges or SELECT * FROM users'}
-              {...f('resource')}
-            />
-          </FieldRow>
+          
+          {form.connection && ['mssql', 'postgresql', 'mysql'].includes(connectors.find(c => c.id === form.connection)?.type ?? '') && (
+            <div className="p-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold text-indigo-200 flex items-center gap-1.5">
+                  <Database size={12} />
+                  Select Multiple Tables
+                </div>
+                <button
+                  onClick={() => setForm({ ...form, multiTableMode: !form.multiTableMode, selectedTables: [] })}
+                  className="text-[11px] px-2 py-1 rounded bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 transition-colors"
+                >
+                  {form.multiTableMode ? 'Single Table' : 'Multi-Select'}
+                </button>
+              </div>
+              {form.multiTableMode ? (
+                <TableBrowser 
+                  connectorId={form.connection}
+                  connectorType={connectors.find(c => c.id === form.connection)?.type ?? ''}
+                  selectedTables={form.selectedTables}
+                  onSelectTables={tables => setForm({ ...form, selectedTables: tables })}
+                />
+              ) : (
+                <div className="text-[11px] text-indigo-200/70 leading-relaxed">
+                  💡 Enable Multi-Select to choose multiple tables and create datasets for all of them at once
+                </div>
+              )}
+            </div>
+          )}
+          
+          {(!form.multiTableMode || !['mssql', 'postgresql', 'mysql'].includes(connectors.find(c => c.id === form.connection)?.type ?? '')) && (
+            <FieldRow label="Resource / Path">
+              <Input
+                placeholder={form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureb2c'
+                  ? 'e.g. users, userFlows, customPolicies, or /users?$filter=...'
+                  : form.connection && connectors.find(c => c.id === form.connection)?.type === 'azureentraid'
+                  ? 'e.g. users, groups, applications, or /groups?$filter=...'
+                  : 'e.g. /v1/charges or table_name or SELECT * FROM users'}
+                {...f('resource')}
+              />
+            </FieldRow>
+          )}
+          
           <FieldRow label="Format">
             <Select {...f('format')}>
               <option value="json">JSON (auto-detect)</option>
@@ -365,6 +402,123 @@ function StepConfigure({
             </Select>
           </FieldRow>
         </>
+      )}
+    </div>
+  )
+}
+
+/* ── Table Browser Component for Multi-Selection ─────────────────────────────── */
+function TableBrowser({ connectorId, connectorType, selectedTables, onSelectTables }: {
+  connectorId: string
+  connectorType: string
+  selectedTables: string[]
+  onSelectTables: (tables: string[]) => void
+}) {
+  const [loading, setLoading] = useState(true)
+  const [tables, setTables] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    fetch('/api/connectors/browse-tables', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectorId, connectorType }),
+    })
+      .then(r => r.json())
+      .then((data: { tables: string[]; error?: string }) => {
+        if (data.error) {
+          setError(data.error)
+        } else {
+          setTables(data.tables || [])
+        }
+        setLoading(false)
+      })
+      .catch((e: Error) => {
+        setError(e.message)
+        setLoading(false)
+      })
+  }, [connectorId, connectorType])
+
+  const filteredTables = tables.filter(t => t.toLowerCase().includes(search.toLowerCase()))
+  const isSelected = (table: string) => selectedTables.includes(table)
+  const toggleTable = (table: string) => {
+    if (isSelected(table)) {
+      onSelectTables(selectedTables.filter(t => t !== table))
+    } else {
+      onSelectTables([...selectedTables, table])
+    }
+  }
+  const selectAll = () => onSelectTables(filteredTables)
+  const selectNone = () => onSelectTables([])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-6">
+        <Loader2 size={16} className="text-indigo-400 animate-spin" />
+        <span className="ml-2 text-[11px] text-indigo-200">Loading tables...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="p-3 rounded-lg border border-rose-500/20 bg-rose-500/5 text-[11px] text-rose-200">
+        Failed to load tables: {error}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2 mt-2">
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="Search tables..."
+          value={search}
+          onChange={setSearch}
+          className="flex-1 !text-[11px] !py-1.5"
+        />
+        <button
+          onClick={selectAll}
+          className="text-[10px] px-2 py-1.5 rounded bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 transition-colors"
+        >
+          All
+        </button>
+        <button
+          onClick={selectNone}
+          className="text-[10px] px-2 py-1.5 rounded bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 transition-colors"
+        >
+          None
+        </button>
+      </div>
+      
+      {filteredTables.length === 0 ? (
+        <div className="text-center py-4 text-[11px] text-indigo-200/60">No tables found</div>
+      ) : (
+        <div className="max-h-[240px] overflow-y-auto rounded-lg border border-indigo-500/20 bg-indigo-950/20">
+          {filteredTables.map(table => (
+            <button
+              key={table}
+              onClick={() => toggleTable(table)}
+              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-indigo-500/10 transition-colors text-left border-b last:border-0 border-indigo-500/10"
+            >
+              {isSelected(table) ? (
+                <CheckSquare size={14} className="text-indigo-300 shrink-0" />
+              ) : (
+                <Square size={14} className="text-indigo-400/40 shrink-0" />
+              )}
+              <span className="text-[11px] font-mono text-indigo-100">{table}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      
+      {selectedTables.length > 0 && (
+        <div className="text-[10px] text-indigo-200 font-semibold">
+          {selectedTables.length} table{selectedTables.length === 1 ? '' : 's'} selected → will create {selectedTables.length} dataset{selectedTables.length === 1 ? '' : 's'}
+        </div>
       )}
     </div>
   )
@@ -602,6 +756,7 @@ function StepDone({ form, source, previewResult, onClose, onAddAnother }: {
   const src        = SOURCES.find(s => s.id === source)!
   const fieldCount = previewResult?.schema.length
   const rowCount   = previewResult?.totalRows
+  const isMultiTable = form.multiTableMode && form.selectedTables.length > 0
 
   return (
     <div className="animate-fade-in flex flex-col items-center text-center py-8 gap-6">
@@ -610,43 +765,66 @@ function StepDone({ form, source, previewResult, onClose, onAddAnother }: {
       </div>
 
       <div>
-        <h3 className="text-lg font-bold text-chef-text mb-1">Dataset Created</h3>
-        <p className="text-sm text-chef-muted">
-          <span className="font-mono text-indigo-400 font-semibold">{name}</span> has been added to your workspace.
-        </p>
+        <h3 className="text-lg font-bold text-chef-text mb-1">
+          {isMultiTable ? `${form.selectedTables.length} Datasets Created` : 'Dataset Created'}
+        </h3>
+        {isMultiTable ? (
+          <p className="text-sm text-chef-muted mb-3">
+            Successfully created datasets for {form.selectedTables.length} table{form.selectedTables.length === 1 ? '' : 's'}
+          </p>
+        ) : (
+          <p className="text-sm text-chef-muted">
+            <span className="font-mono text-indigo-400 font-semibold">{name}</span> has been added to your workspace.
+          </p>
+        )}
       </div>
 
-      <div className="w-full max-w-sm p-4 rounded-xl border border-chef-border bg-chef-card text-left space-y-2">
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-chef-muted">Source</span>
-          <span className="flex items-center gap-1.5 text-chef-text font-medium">
-            <src.Icon size={12} className={src.color} /> {src.label}
-          </span>
+      {isMultiTable ? (
+        <div className="w-full max-w-md max-h-[280px] overflow-y-auto rounded-xl border border-chef-border bg-chef-card">
+          <div className="sticky top-0 bg-chef-card border-b border-chef-border px-4 py-2 text-xs font-semibold text-chef-muted uppercase">
+            Created Datasets
+          </div>
+          {form.selectedTables.map((table, i) => (
+            <div key={i} className="px-4 py-2.5 border-b last:border-0 border-chef-border hover:bg-chef-bg/40 transition-colors">
+              <div className="text-xs font-mono text-chef-text">
+                {name} - {table}
+              </div>
+            </div>
+          ))}
         </div>
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-chef-muted">Fields detected</span>
-          <span className="text-chef-text font-mono">
-            {fieldCount != null ? fieldCount : '–'}
-          </span>
+      ) : (
+        <div className="w-full max-w-sm p-4 rounded-xl border border-chef-border bg-chef-card text-left space-y-2">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-chef-muted">Source</span>
+            <span className="flex items-center gap-1.5 text-chef-text font-medium">
+              <src.Icon size={12} className={src.color} /> {src.label}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-chef-muted">Fields detected</span>
+            <span className="text-chef-text font-mono">
+              {fieldCount != null ? fieldCount : '–'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-chef-muted">Sample rows</span>
+            <span className="text-chef-text font-mono">
+              {rowCount != null ? rowCount.toLocaleString() : '–'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-chef-muted">Schema version</span>
+            <span className="text-chef-text font-mono">v1 (auto)</span>
+          </div>
         </div>
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-chef-muted">Sample rows</span>
-          <span className="text-chef-text font-mono">
-            {rowCount != null ? rowCount.toLocaleString() : '–'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-chef-muted">Schema version</span>
-          <span className="text-chef-text font-mono">v1 (auto)</span>
-        </div>
-      </div>
+      )}
 
       <div className="flex items-center gap-3">
         <button
           onClick={onClose}
           className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
         >
-          View Dataset <ChevronRight size={14} />
+          View Dataset{isMultiTable ? 's' : ''} <ChevronRight size={14} />
         </button>
         <button
           onClick={onAddAnother}
@@ -689,28 +867,55 @@ export default function NewDatasetWizard({ onClose, onCreated }: WizardProps) {
     if (saving) return
     setSaving(true)
     try {
-      const res = await fetch('/api/datasets', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name:       form.name,
-          source:     source,
-          url:        form.url,
-          auth:       form.auth,
-          connectorId: source === 'conn' ? form.connection : undefined,
-          connection: source === 'conn'
-            ? (connectors.find(c => c.id === form.connection)?.name ?? form.connection)
-            : undefined,
-          resource:   source === 'conn' ? form.resource : undefined,
-          format:     form.format,
-          schema:     previewResult?.schema     ?? null,
-          sampleRows: previewResult?.sampleRows ?? null,
-          totalRows:  previewResult?.totalRows  ?? null,
-        }),
-      })
-      const ds = await res.json()
-      setStep(3)
-      onCreated?.(ds)
+      // Multi-table mode: create multiple datasets
+      if (form.multiTableMode && form.selectedTables.length > 0) {
+        const results = []
+        for (const table of form.selectedTables) {
+          const res = await fetch('/api/datasets', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name:       `${form.name || 'Dataset'} - ${table}`,
+              source:     source,
+              connectorId: form.connection,
+              connection: connectors.find(c => c.id === form.connection)?.name ?? form.connection,
+              resource:   table,
+              format:     form.format,
+              schema:     null,
+              sampleRows: null,
+              totalRows:  null,
+            }),
+          })
+          const ds = await res.json()
+          results.push(ds)
+        }
+        setStep(3)
+        if (results.length > 0) onCreated?.(results[0])
+      } else {
+        // Single dataset mode
+        const res = await fetch('/api/datasets', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name:       form.name,
+            source:     source,
+            url:        form.url,
+            auth:       form.auth,
+            connectorId: source === 'conn' ? form.connection : undefined,
+            connection: source === 'conn'
+              ? (connectors.find(c => c.id === form.connection)?.name ?? form.connection)
+              : undefined,
+            resource:   source === 'conn' ? form.resource : undefined,
+            format:     form.format,
+            schema:     previewResult?.schema     ?? null,
+            sampleRows: previewResult?.sampleRows ?? null,
+            totalRows:  previewResult?.totalRows  ?? null,
+          }),
+        })
+        const ds = await res.json()
+        setStep(3)
+        onCreated?.(ds)
+      }
     } catch {
       // still advance — creation is best-effort in this demo
       setStep(3)
@@ -719,7 +924,11 @@ export default function NewDatasetWizard({ onClose, onCreated }: WizardProps) {
     }
   }
 
-  const canAdvance = step === 0 ? source !== null : step === 1 ? form.name.trim().length > 0 : true
+  const canAdvance = step === 0 
+    ? source !== null 
+    : step === 1 
+      ? (form.multiTableMode ? form.selectedTables.length > 0 : form.name.trim().length > 0)
+      : true
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -735,7 +944,7 @@ export default function NewDatasetWizard({ onClose, onCreated }: WizardProps) {
             <h2 className="text-base font-bold text-chef-text">Add New Dataset</h2>
             <p className="text-[11px] text-chef-muted mt-0.5">Step {step + 1} of {STEPS.length}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 text-chef-muted hover:text-chef-text hover:bg-chef-card rounded-lg transition-colors">
+          <button onClick={onClose} className="p-1.5 text-chef-muted hover:text-chef-text hover:bg-chef-card rounded-lg transition-colors" title="Close">
             <X size={16} />
           </button>
         </div>
@@ -776,7 +985,15 @@ export default function NewDatasetWizard({ onClose, onCreated }: WizardProps) {
             </button>
 
             <button
-              onClick={step === 2 ? handleCreate : () => setStep(s => s + 1)}
+              onClick={
+                step === 2 && form.multiTableMode 
+                  ? handleCreate // Skip preview for multi-table, go straight to create
+                  : step === 2 
+                    ? handleCreate 
+                    : step === 1 && form.multiTableMode
+                      ? handleCreate // Skip preview step for multi-table mode
+                      : () => setStep(s => s + 1)
+              }
               disabled={!canAdvance || saving}
               className={`flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg transition-colors ${
                 canAdvance && !saving
@@ -785,8 +1002,14 @@ export default function NewDatasetWizard({ onClose, onCreated }: WizardProps) {
               }`}
             >
               {saving
-                ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
-                : <>{step === 1 ? 'Preview' : step === 2 ? 'Create Dataset' : 'Continue'}<ChevronRight size={14} /></>
+                ? <><Loader2 size={14} className="animate-spin" /> Creating…</>
+                : step === 1 && form.multiTableMode
+                  ? <>{`Create ${form.selectedTables.length} Datasets`}<ChevronRight size={14} /></>
+                  : step === 1 
+                    ? <>Preview<ChevronRight size={14} /></>
+                    : step === 2 
+                      ? 'Create Dataset'
+                      : <>Continue<ChevronRight size={14} /></>
               }
             </button>
           </div>

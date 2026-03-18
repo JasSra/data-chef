@@ -20,12 +20,20 @@ services:
     image: datachef:latest
     container_name: datachef
     restart: unless-stopped
+    # Use host network to access services on the host machine (Linux only)
+    # Comment this out if using host.docker.internal on Windows/Mac
+    # network_mode: "host"
     ports:
       - "3333:3000"
     volumes:
       - datachef-data:/app/.datachef
     environment:
       NODE_ENV: production
+      # ── Docker Host Access ──
+      # Set this to reach SQL Server or other services on the host machine:
+      MSSQL_DEFAULT_HOST: host.docker.internal
+      # Or use your host IP directly (more reliable on Linux):
+      # MSSQL_DEFAULT_HOST: 192.168.4.102
       # ── Optional: Azure observability connectors ──
       # Uncomment and fill in to pre-seed App Insights (API key) or Azure Monitor (OAuth) connectors on startup.
       # These are only used at runtime; they never appear in the built image.
